@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function() {
+        try {
+          var _fetch = window.fetch;
+          Object.defineProperty(window, 'fetch', {
+            configurable: true,
+            enumerable: true,
+            get: function() {
+              return _fetch;
+            },
+            set: function(fn) {
+              _fetch = fn;
+            }
+          });
+        } catch (e) {}
+      })();
+    </script>
+    <title>Hội Thao THPT Phú Lâm - Đăng Ký, Xếp Lịch & Kết Quả Thi Đấu</title>
+    <meta name="description" content="Hệ thống quản lý thể thao học đường Trường THPT Phú Lâm: Đăng ký trực tuyến, xếp lịch thi đấu, bảng xếp hạng huy chương và trực tiếp kết quả 9 môn thi đấu." />
+    <meta property="og:title" content="Hội Thao THPT Phú Lâm - Đăng Ký & Kết Quả Thi Đấu" />
+    <meta property="og:description" content="Trang web chính thức Hội Thao Học Đường THPT Phú Lâm. Đăng ký thi đấu, theo dõi lịch thi, sơ đồ thi đấu và bảng tổng sắp huy chương." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/jpeg" href="/school_logo.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-white text-slate-950 font-sans antialiased selection:bg-amber-400 selection:text-slate-950">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

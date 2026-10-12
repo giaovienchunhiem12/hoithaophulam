@@ -1,0 +1,6 @@
+{
+  "name": "Hội Thao THPT Phú Lâm - Thể Thao Học Đường",
+  "description": "Hệ thống quản lý, đăng ký thi đấu trực tuyến, xếp lịch và thông báo kết quả Hội thao THPT Phú Lâm.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

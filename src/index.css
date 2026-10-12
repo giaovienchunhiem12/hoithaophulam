@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif;
+    background-color: #ffffff;
+    color: #0f172a;
+  }
+}
+
+/* Custom Smooth Horizontal Scrollbar */
+.horizontal-scroll-container {
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #f59e0b #0f172a;
+}
+
+.horizontal-scroll-container::-webkit-scrollbar {
+  height: 7px;
+}
+
+.horizontal-scroll-container::-webkit-scrollbar-track {
+  background: #0f172a;
+  border-radius: 9999px;
+}
+
+.horizontal-scroll-container::-webkit-scrollbar-thumb {
+  background: #f59e0b;
+  border-radius: 9999px;
+  border: 1px solid #0f172a;
+}
+
+.horizontal-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #fbbf24;
+}
