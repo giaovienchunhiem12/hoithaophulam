@@ -208,20 +208,45 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
   const [activeSpinSlot, setActiveSpinSlot] = useState<BracketSlot | null>(null);
   const [isSpinning, setIsSpinning] = useState<boolean>(false);
   const [spinningDisplayText, setSpinningDisplayText] = useState<string>('---');
+  const [spinPrevText, setSpinPrevText] = useState<string>('');
+  const [spinNextText, setSpinNextText] = useState<string>('');
   const [drawnWinner, setDrawnWinner] = useState<string | null>(null);
   const [isAutoSpinningAll, setIsAutoSpinningAll] = useState<boolean>(false);
   const [isAutoSpinningGroup, setIsAutoSpinningGroup] = useState<string | null>(null);
   const [appliedSuccess, setAppliedSuccess] = useState<boolean>(false);
 
+  const formatTeamLabel = (name?: string | null): string => {
+    if (!name) return '';
+    const trimmed = name.trim();
+    if (/^(10|11|12)[A-Z]\d+$/i.test(trimmed)) {
+      return `Lớp ${trimmed}`;
+    }
+    return trimmed;
+  };
+
   // Handle clicking a slot on the bracket tree diagram
   const handleSlotClick = (slot: BracketSlot) => {
     if (isSpinning || isAutoSpinningAll || isAutoSpinningGroup) return;
     setActiveSpinSlot(slot);
-    setDrawnWinner(null);
-    setSpinningDisplayText(slot.assignedTeam ? `Lớp ${slot.assignedTeam}` : 'Nhấn Bắt Đầu Quay');
+    setDrawnWinner(slot.assignedTeam || null);
+    setSpinningDisplayText(slot.assignedTeam ? slot.assignedTeam : 'Sẵn sàng quay số');
+    setSpinPrevText('');
+    setSpinNextText('');
   };
 
-  // TRIGGER SPINNING WHEEL: ONLY DRAWS FROM THE CURRENT GROUP'S POOL!
+  const handleJumpToNextEmptySlot = () => {
+    if (!activeSpinSlot || isSpinning) return;
+    const groupSlots = bracketSlots.filter((s) => s.groupName === activeSpinSlot.groupName);
+    const currentIdx = groupSlots.findIndex((s) => s.slotId === activeSpinSlot.slotId);
+    const nextEmpty =
+      groupSlots.slice(currentIdx + 1).find((s) => !s.assignedTeam) ||
+      groupSlots.find((s) => !s.assignedTeam);
+    if (nextEmpty) {
+      handleSlotClick(nextEmpty);
+    }
+  };
+
+  // TRIGGER SPINNING WHEEL: ONLY DRAWS FROM THE CURRENT GROUP'S POOL WITH DECELERATING REEL EFFECT!
   const triggerSpinForSlot = (targetSlot: BracketSlot) => {
     const groupName = targetSlot.groupName;
     const groupPool = groupPools[groupName] || [];
@@ -233,35 +258,49 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
     );
 
     if (availableInGroup.length === 0) {
-      alert(`Đã bốc thăm hết toàn bộ đội trong danh sách của ${groupName}!`);
       return;
     }
 
     setIsSpinning(true);
     setDrawnWinner(null);
 
-    let speed = 40;
-    let iterations = 0;
-    const maxIterations = 24 + Math.floor(Math.random() * 8);
+    const totalSteps = 32 + Math.floor(Math.random() * 10);
     const chosenWinner = availableInGroup[Math.floor(Math.random() * availableInGroup.length)];
+    let step = 0;
 
-    const spinInterval = setInterval(() => {
-      iterations++;
-      const randomDisplay = availableInGroup[Math.floor(Math.random() * availableInGroup.length)];
-      setSpinningDisplayText(randomDisplay);
+    const runStep = () => {
+      step++;
+      const idx = Math.floor(Math.random() * availableInGroup.length);
+      const currentCandidate = step >= totalSteps ? chosenWinner : availableInGroup[idx];
+      const prevCandidate = availableInGroup[(idx - 1 + availableInGroup.length) % availableInGroup.length];
+      const nextCandidate = availableInGroup[(idx + 1) % availableInGroup.length];
 
-      if (iterations >= maxIterations) {
-        clearInterval(spinInterval);
-        setSpinningDisplayText(`Lớp ${chosenWinner}`);
+      setSpinningDisplayText(currentCandidate);
+      setSpinPrevText(prevCandidate || '');
+      setSpinNextText(nextCandidate || '');
+
+      if (step >= totalSteps) {
+        setSpinningDisplayText(chosenWinner);
         setDrawnWinner(chosenWinner);
         setIsSpinning(false);
 
-        // Assign to slot
+        // Assign to slot and sync activeSpinSlot
         setBracketSlots((prev) =>
           prev.map((s) => (s.slotId === targetSlot.slotId ? { ...s, assignedTeam: chosenWinner } : s))
         );
+        setActiveSpinSlot((prev) => (prev ? { ...prev, assignedTeam: chosenWinner } : prev));
+        return;
       }
-    }, speed);
+
+      // Smooth deceleration curve: fast at start (40ms), dramatic slowdown at end (up to 220ms)
+      const progress = step / totalSteps;
+      const nextDelay = progress < 0.6
+        ? 45
+        : Math.round(45 + Math.pow((progress - 0.6) / 0.4, 2) * 185);
+      setTimeout(runStep, nextDelay);
+    };
+
+    runStep();
   };
 
   // Auto spin for a SPECIFIC group only (e.g. Bảng A only from Bảng A pool)
@@ -2909,112 +2948,384 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
       )}
 
       {/* ============================================================== */}
-      {/* LUCKY DRAW ROULETTE POPUP MODAL                                */}
+      {/* WIDE BROADCAST-GRADE LUCKY DRAW ROULETTE ARENA MODAL           */}
       {/* ============================================================== */}
-      {activeSpinSlot && (
-        <div className="fixed inset-0 z-50 bg-blue-950/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white border-4 border-amber-400 rounded-3xl w-full max-w-md p-6 space-y-5 shadow-2xl relative text-slate-900 animate-in fade-in zoom-in-95 duration-200">
-            {/* Close Button */}
-            <button
-              onClick={() => {
-                if (!isSpinning) setActiveSpinSlot(null);
-              }}
-              disabled={isSpinning}
-              className="absolute top-4 right-4 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors disabled:opacity-30"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      {activeSpinSlot && (() => {
+        const currentGroupPool = groupPools[activeSpinSlot.groupName] || [];
+        const assignedSet = getAssignedTeamsInGroup(activeSpinSlot.groupName);
+        const unassignedList = getUnassignedTeamsForGroup(activeSpinSlot.groupName);
+        const groupSlotsList = bracketSlots.filter((s) => s.groupName === activeSpinSlot.groupName);
+        const filledInGroupCount = groupSlotsList.filter((s) => s.assignedTeam).length;
+        const hasNextEmptySlot = groupSlotsList.some((s) => !s.assignedTeam && s.slotId !== activeSpinSlot.slotId);
 
-            {/* Modal Header */}
-            <div className="text-center space-y-1">
-              <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full">
-                <Shuffle className="w-3 h-3 text-amber-600" />
-                <span>Bốc Thăm Vị Trí {activeSpinSlot.slotId} - {activeSpinSlot.groupName}</span>
-              </span>
-              <h3 className="text-xl font-black text-blue-950 font-sans font-bold">
-                Quay Ngẫu Nhiên Đội Tuyển ({activeSpinSlot.groupName})
-              </h3>
-              <p className="text-xs text-slate-500">
-                Chỉ bốc thăm trong <strong>{(groupPools[activeSpinSlot.groupName] || []).length} đội của {activeSpinSlot.groupName}</strong> (còn {getUnassignedTeamsForGroup(activeSpinSlot.groupName).length} đội chưa chọn vị trí)
-              </p>
-            </div>
+        // Map teamName -> assigned slotId in this group
+        const teamToSlotMap: Record<string, string> = {};
+        groupSlotsList.forEach((s) => {
+          if (s.assignedTeam) {
+            teamToSlotMap[s.assignedTeam] = s.slotId;
+          }
+        });
 
-            {/* Candidate Pool Badges for THIS Group */}
-            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-1">
-              <div className="text-[10px] font-bold text-slate-600 uppercase">
-                Danh sách đội của {activeSpinSlot.groupName}:
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-y-auto">
+            <div className="bg-white border-4 border-amber-400 rounded-3xl w-full max-w-6xl shadow-[0_0_70px_rgba(251,191,36,0.3)] relative text-slate-900 overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[94vh]">
+              
+              {/* 1. TOP ROYAL BLUE & GOLD BROADCAST HEADER */}
+              <div className="bg-gradient-to-r from-blue-950 via-indigo-950 to-slate-950 text-white px-5 py-4 sm:px-7 sm:py-5 border-b-4 border-amber-400 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 relative overflow-hidden">
+                {/* Ambient glow */}
+                <div className="absolute -top-12 -left-12 w-56 h-56 bg-amber-400/15 rounded-full blur-2xl pointer-events-none" />
+                <div className="absolute -bottom-12 right-12 w-64 h-64 bg-blue-500/15 rounded-full blur-2xl pointer-events-none" />
+
+                <div className="space-y-1 relative z-10">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-blue-950 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 px-3 py-1 rounded-full shadow-md">
+                      <Sparkles className="w-3.5 h-3.5 text-blue-950 animate-spin" />
+                      <span>SÂN KHẤU BỐC THĂM VỊ TRÍ {activeSpinSlot.slotId} · {activeSpinSlot.groupName}</span>
+                    </span>
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-900/90 text-amber-300 border border-amber-400/40 font-mono">
+                      Đã xếp: {filledInGroupCount}/{currentGroupPool.length} đội (Còn {unassignedList.length} đội chờ quay)
+                    </span>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-white font-sans tracking-tight">
+                    Quay Ngẫu Nhiên Đội Tuyển ({activeSpinSlot.groupName})
+                  </h3>
+                </div>
+
+                <div className="flex items-center gap-3 self-end md:self-center relative z-10">
+                  {hasNextEmptySlot && !isSpinning && (
+                    <button
+                      type="button"
+                      onClick={handleJumpToNextEmptySlot}
+                      className="px-4 py-2.5 bg-blue-800/90 hover:bg-blue-700 text-amber-300 font-black text-xs rounded-xl border border-amber-400/50 shadow flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <span>Vị Trí Trống Tiếp Theo</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isSpinning) setActiveSpinSlot(null);
+                    }}
+                    disabled={isSpinning}
+                    className="p-2.5 rounded-2xl bg-white/10 hover:bg-rose-500/90 text-white border border-white/20 transition-all disabled:opacity-30 cursor-pointer"
+                    title="Đóng cửa sổ quay"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1">
-                {(groupPools[activeSpinSlot.groupName] || []).map((t) => {
-                  const isAssigned = getAssignedTeamsInGroup(activeSpinSlot.groupName).has(t) && t !== activeSpinSlot.assignedTeam;
-                  return (
-                    <span
-                      key={t}
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
-                        isAssigned
-                          ? 'bg-slate-200 text-slate-400 line-through'
-                          : 'bg-blue-900 text-amber-300 border border-amber-400/40'
+
+              {/* 2. QUICK SLOT NAVIGATION BAR (JUMP BETWEEN SLOTS A1..AN WITHOUT CLOSING MODAL) */}
+              <div className="bg-slate-900 px-5 py-2.5 border-b border-slate-800 flex items-center gap-2 overflow-x-auto shrink-0">
+                <span className="text-[11px] font-black uppercase tracking-wider text-amber-400 shrink-0 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Chọn nhanh vị trí ({activeSpinSlot.groupName}):</span>
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {groupSlotsList.map((s) => {
+                    const isCurrent = s.slotId === activeSpinSlot.slotId;
+                    const hasTeam = Boolean(s.assignedTeam);
+                    return (
+                      <button
+                        key={s.slotId}
+                        type="button"
+                        disabled={isSpinning}
+                        onClick={() => handleSlotClick(s)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-mono font-black transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                          isCurrent
+                            ? 'bg-gradient-to-r from-amber-400 to-yellow-400 text-slate-950 ring-2 ring-white scale-105 shadow'
+                            : hasTeam
+                            ? 'bg-emerald-900/80 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-800'
+                            : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'
+                        }`}
+                        title={hasTeam ? `${s.slotId}: ${s.assignedTeam}` : `Vị trí ${s.slotId} (Chưa quay)`}
+                      >
+                        <span>{s.slotId}</span>
+                        {hasTeam && <Check className="w-3 h-3 text-emerald-400 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3. MAIN WIDE 2-COLUMN BODY: LEFT = 3D SLOT STAGE, RIGHT = LIVE CANDIDATE GRID */}
+              <div className="p-5 sm:p-7 overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch bg-slate-50/70">
+                
+                {/* LEFT 5 COLUMNS: HIGH-IMPACT SLOT MACHINE & WINNER STAGE */}
+                <div className="lg:col-span-5 flex flex-col justify-between bg-gradient-to-b from-slate-950 via-blue-950 to-indigo-950 rounded-3xl p-6 border-4 border-amber-400 shadow-2xl relative overflow-hidden text-center min-h-[380px]">
+                  {/* Animated decorative rings */}
+                  <div
+                    className={`w-72 h-72 rounded-full border-2 border-dashed border-amber-400/20 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none ${
+                      isSpinning ? 'animate-spin' : ''
+                    }`}
+                  />
+                  <div
+                    className={`w-96 h-96 rounded-full border border-blue-400/15 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none ${
+                      isSpinning ? 'animate-ping' : ''
+                    }`}
+                  />
+
+                  {/* Stage Status Badge */}
+                  <div className="relative z-10 space-y-1.5">
+                    <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/10 border border-amber-400/40 text-amber-300 text-xs font-black uppercase tracking-widest shadow-inner">
+                      {isSpinning ? (
+                        <>
+                          <Dices className="w-4 h-4 text-amber-400 animate-spin" />
+                          <span>🎰 ĐANG QUAY VÒNG BỐC THĂM...</span>
+                        </>
+                      ) : drawnWinner ? (
+                        <>
+                          <Trophy className="w-4 h-4 text-amber-400 animate-bounce" />
+                          <span>🎉 CHÚC MỪNG ĐỘI TRÚNG THĂM VỊ TRÍ {activeSpinSlot.slotId}!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4 text-amber-400" />
+                          <span>SẴN SÀNG QUAY VỊ TRÍ {activeSpinSlot.slotId}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 3-ROW SLOT MACHINE WINDOW */}
+                  <div className="relative z-10 my-5 space-y-2.5">
+                    {/* Upper ghost slot row (visible while spinning) */}
+                    <div
+                      className={`h-9 rounded-xl border flex items-center justify-center px-4 text-xs font-bold transition-all duration-100 select-none ${
+                        isSpinning && spinPrevText
+                          ? 'bg-white/5 border-white/10 text-blue-200/60 scale-95 blur-[0.4px]'
+                          : 'bg-white/5 border-transparent text-slate-500/40 scale-95'
                       }`}
                     >
-                      {t}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
+                      <span className="truncate">
+                        {isSpinning && spinPrevText ? formatTeamLabel(spinPrevText) : '• • • • • • • • •'}
+                      </span>
+                    </div>
 
-            {/* Spinning Visual Reel */}
-            <div className="bg-gradient-to-br from-blue-950 via-slate-900 to-indigo-950 p-6 rounded-2xl border-2 border-amber-400 shadow-inner text-center space-y-3">
-              <div className="text-[10px] font-bold text-amber-300 uppercase tracking-widest">
-                {isSpinning ? `🎰 Đang Quay Vòng Bốc Thăm ${activeSpinSlot.groupName}...` : drawnWinner ? '🎉 Đội Trúng Thăm Vị Trí' : 'Sẵn Sàng Bốc Thăm'}
-              </div>
+                    {/* CENTER SPOTLIGHT REEL BOX */}
+                    <div
+                      className={`relative py-6 px-5 rounded-3xl border-3 transition-all duration-200 flex flex-col items-center justify-center gap-2 shadow-2xl ${
+                        isSpinning
+                          ? 'bg-gradient-to-r from-amber-500/25 via-blue-900/80 to-amber-500/25 border-amber-400 text-amber-300 scale-[1.03] shadow-[0_0_40px_rgba(251,191,36,0.45)]'
+                          : drawnWinner
+                          ? 'bg-gradient-to-br from-emerald-500/30 via-emerald-900/60 to-teal-900/70 border-emerald-400 text-emerald-200 scale-[1.03] shadow-[0_0_45px_rgba(16,185,129,0.5)]'
+                          : 'bg-white/10 border-white/25 text-white'
+                      }`}
+                    >
+                      {/* Side indicator arrows */}
+                      <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-400 font-black text-lg">
+                        ▶
+                      </div>
+                      <div className="absolute right-2.5 top-1/2 -translate-y-1/2 text-amber-400 font-black text-lg">
+                        ◀
+                      </div>
 
-              {/* Reel Text Display */}
-              <div
-                className={`py-4 px-6 rounded-2xl bg-white/10 border-2 text-2xl font-black font-sans font-bold tracking-tight transition-all flex items-center justify-center gap-2 ${
-                  isSpinning
-                    ? 'border-amber-400 text-amber-300 animate-pulse scale-105 shadow-lg shadow-amber-400/20'
-                    : drawnWinner
-                    ? 'border-emerald-400 bg-emerald-500/20 text-emerald-300 shadow-xl'
-                    : 'border-white/20 text-white'
-                }`}
-              >
-                {isSpinning && <Dices className="w-6 h-6 animate-spin text-amber-400" />}
-                <span>{spinningDisplayText}</span>
-              </div>
+                      {/* Emblem / Icon */}
+                      <div className="flex items-center justify-center gap-2">
+                        {isSpinning ? (
+                          <div className="w-12 h-12 rounded-2xl bg-amber-400/20 border-2 border-amber-400 flex items-center justify-center shadow-lg">
+                            <Dices className="w-7 h-7 text-amber-300 animate-spin" />
+                          </div>
+                        ) : drawnWinner ? (
+                          <div className="w-14 h-14 rounded-2xl bg-emerald-400/20 border-2 border-emerald-300 flex items-center justify-center text-3xl shadow-lg animate-bounce">
+                            {getTeamEmblem(drawnWinner, registrations)}
+                          </div>
+                        ) : (
+                          <div className="w-12 h-12 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center text-2xl">
+                            🎲
+                          </div>
+                        )}
+                      </div>
 
-              {drawnWinner && (
-                <div className="text-xs text-emerald-400 font-bold flex items-center justify-center gap-1.5 animate-bounce">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Đã xếp Lớp {drawnWinner} vào Vị trí {activeSpinSlot.slotId} ({activeSpinSlot.groupName})</span>
+                      {/* Main Team Name Display */}
+                      <div
+                        className={`text-xl sm:text-2xl md:text-3xl font-black font-sans tracking-tight leading-snug break-words max-w-full px-3 ${
+                          isSpinning
+                            ? 'text-amber-300'
+                            : drawnWinner
+                            ? 'text-white drop-shadow-[0_2px_10px_rgba(16,185,129,0.8)]'
+                            : 'text-blue-100'
+                        }`}
+                      >
+                        {formatTeamLabel(spinningDisplayText)}
+                      </div>
+
+                      {/* Position Confirmation Badge */}
+                      {drawnWinner && !isSpinning && (
+                        <div className="mt-1 inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-emerald-400 text-slate-950 text-xs font-black uppercase tracking-wide shadow-md">
+                          <CheckCircle2 className="w-4 h-4 text-slate-950 shrink-0" />
+                          <span>Chính thức xếp vào Vị trí {activeSpinSlot.slotId} ({activeSpinSlot.groupName})</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Lower ghost slot row (visible while spinning) */}
+                    <div
+                      className={`h-9 rounded-xl border flex items-center justify-center px-4 text-xs font-bold transition-all duration-100 select-none ${
+                        isSpinning && spinNextText
+                          ? 'bg-white/5 border-white/10 text-blue-200/60 scale-95 blur-[0.4px]'
+                          : 'bg-white/5 border-transparent text-slate-500/40 scale-95'
+                      }`}
+                    >
+                      <span className="truncate">
+                        {isSpinning && spinNextText ? formatTeamLabel(spinNextText) : '• • • • • • • • •'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons on Stage */}
+                  <div className="relative z-10 space-y-2.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => triggerSpinForSlot(activeSpinSlot)}
+                      disabled={isSpinning || (unassignedList.length === 0 && !activeSpinSlot.assignedTeam)}
+                      className="w-full py-4 px-5 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-blue-950 font-black text-sm uppercase tracking-wider rounded-2xl shadow-[0_6px_25px_rgba(251,191,36,0.45)] transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0"
+                    >
+                      <Shuffle className={`w-5 h-5 ${isSpinning ? 'animate-spin' : ''}`} />
+                      <span>
+                        {isSpinning
+                          ? 'ĐANG QUAY NGẪU NHIÊN...'
+                          : drawnWinner
+                          ? `🔄 QUAY LẠI VỊ TRÍ ${activeSpinSlot.slotId}`
+                          : `🎲 BẮT ĐẦU QUAY ĐỘI ${activeSpinSlot.groupName}`}
+                      </span>
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {hasNextEmptySlot ? (
+                        <button
+                          type="button"
+                          onClick={handleJumpToNextEmptySlot}
+                          disabled={isSpinning}
+                          className="py-2.5 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                        >
+                          <span>Sang Ô Kế Tiếp</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <div className="py-2.5 px-3 bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Đã đủ vị trí</span>
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveSpinSlot(null)}
+                        disabled={isSpinning}
+                        className="py-2.5 px-4 bg-white/15 hover:bg-white/25 text-white border border-white/20 font-black text-xs uppercase tracking-wider rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        Hoàn Tất / Đóng
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* Action Buttons in Modal */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <button
-                type="button"
-                onClick={() => triggerSpinForSlot(activeSpinSlot)}
-                disabled={isSpinning || getUnassignedTeamsForGroup(activeSpinSlot.groupName).length === 0}
-                className="flex-1 py-3 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-blue-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                <Shuffle className={`w-4 h-4 ${isSpinning ? 'animate-spin' : ''}`} />
-                <span>{isSpinning ? 'Đang Quay...' : `🎲 Bắt Đầu Quay Đội ${activeSpinSlot.groupName}`}</span>
-              </button>
+                {/* RIGHT 7 COLUMNS: EXPANDED CANDIDATE POOL GRID WITH LIVE SPOTLIGHTING */}
+                <div className="lg:col-span-7 bg-white rounded-3xl border-2 border-slate-200 p-5 sm:p-6 flex flex-col justify-between shadow-md">
+                  <div className="space-y-4">
+                    {/* Pool Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b-2 border-slate-100">
+                      <div className="flex items-center gap-2">
+                        <span className="w-8 h-8 rounded-xl bg-blue-950 text-amber-400 font-black text-xs flex items-center justify-center shadow">
+                          {currentGroupPool.length}
+                        </span>
+                        <div>
+                          <h4 className="text-sm sm:text-base font-black text-blue-950 uppercase tracking-tight">
+                            Danh Sách Đội Của {activeSpinSlot.groupName} ({currentGroupPool.length} Đội)
+                          </h4>
+                          <p className="text-[11px] text-slate-500 font-medium">
+                            Đèn vàng sẽ chạy ngẫu nhiên qua các đội chưa bốc thăm và dừng lại ở đội trúng vị trí <strong>{activeSpinSlot.slotId}</strong>
+                          </p>
+                        </div>
+                      </div>
 
-              <button
-                type="button"
-                onClick={() => setActiveSpinSlot(null)}
-                disabled={isSpinning}
-                className="py-3 px-5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors disabled:opacity-50"
-              >
-                Xong
-              </button>
+                      <div className="flex items-center gap-3 text-[11px] font-bold">
+                        <span className="flex items-center gap-1 text-blue-950">
+                          <span className="w-2.5 h-2.5 rounded-full bg-blue-900 inline-block" />
+                          Chưa quay ({unassignedList.length})
+                        </span>
+                        <span className="flex items-center gap-1 text-emerald-700">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
+                          Đã có vị trí ({assignedSet.size})
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Wide Multi-Column Team Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5 max-h-[420px] overflow-y-auto pr-1">
+                      {currentGroupPool.map((t, idx) => {
+                        const assignedSlotId = teamToSlotMap[t];
+                        const isAssignedToOther = Boolean(assignedSlotId && assignedSlotId !== activeSpinSlot.slotId);
+                        const isCurrentSpinHighlight = isSpinning && spinningDisplayText === t;
+                        const isThisWinner = !isSpinning && drawnWinner === t;
+
+                        return (
+                          <div
+                            key={t}
+                            className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-100 flex items-center justify-between gap-2 border-2 ${
+                              isCurrentSpinHighlight
+                                ? 'bg-amber-400 text-blue-950 border-amber-500 scale-105 ring-4 ring-amber-300/80 shadow-lg font-black z-10'
+                                : isThisWinner
+                                ? 'bg-emerald-500 text-white border-emerald-600 scale-[1.03] ring-4 ring-emerald-300/80 shadow-lg font-black z-10'
+                                : isAssignedToOther
+                                ? 'bg-slate-100 text-slate-400 border-slate-200 line-through opacity-75'
+                                : 'bg-blue-950 text-amber-300 border-blue-900 shadow-xs hover:border-amber-400'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <span
+                                className={`w-5 h-5 rounded-md text-[10px] font-mono font-black flex items-center justify-center shrink-0 ${
+                                  isCurrentSpinHighlight
+                                    ? 'bg-blue-950 text-amber-300'
+                                    : isThisWinner
+                                    ? 'bg-white text-emerald-700'
+                                    : isAssignedToOther
+                                    ? 'bg-slate-200 text-slate-500'
+                                    : 'bg-white/15 text-white'
+                                }`}
+                              >
+                                {idx + 1}
+                              </span>
+                              <span className="truncate" title={t}>
+                                {t}
+                              </span>
+                            </div>
+
+                            {isThisWinner ? (
+                              <span className="px-2 py-0.5 rounded-md bg-white text-emerald-800 font-mono text-[10px] font-black shrink-0 shadow-2xs">
+                                ★ {activeSpinSlot.slotId}
+                              </span>
+                            ) : assignedSlotId ? (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-mono text-[10px] font-black shrink-0 no-underline">
+                                {assignedSlotId}
+                              </span>
+                            ) : isCurrentSpinHighlight ? (
+                              <span className="text-[10px] font-black uppercase shrink-0">⚡</span>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Bottom Helper Bar */}
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 font-medium">
+                    <span>
+                      💡 Mẹo: Sau khi quay xong vị trí <strong>{activeSpinSlot.slotId}</strong>, nhấn <strong>&quot;Sang Ô Kế Tiếp&quot;</strong> để quay liên tục trên màn hình lớn.
+                    </span>
+                    <span className="font-mono font-bold text-blue-950">
+                      {activeSpinSlot.groupName} · {currentSport?.name}
+                    </span>
+                  </div>
+                </div>
+
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Print Bracket Diagram Modal */}
       {isPrintModalOpen && (
