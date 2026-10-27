@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { Match, SportCategory, SportId, Registration } from '../types/sports';
-import { Calendar, MapPin, Clock, Trophy, Filter, Plus, Shuffle, Printer } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Match, SportCategory, SportId, Registration, Tournament } from '../types/sports';
+import { Calendar, MapPin, Clock, Trophy, Filter, Plus, Shuffle, Printer, Sparkles, Layers, Trash2 } from 'lucide-react';
 import { GroupAndDrawTool } from './GroupAndDrawTool';
 import { TournamentBracketTree } from './TournamentBracketTree';
 import { PrintBracketModal } from './PrintBracketModal';
@@ -10,10 +10,15 @@ interface ScheduleAndBracketProps {
   matches: Match[];
   sports: SportCategory[];
   registrations: Registration[];
+  tournaments?: Tournament[];
+  selectedTournamentFilter?: string;
+  setSelectedTournamentFilter?: (tourId: string) => void;
+  onDeleteTournament?: (tourId: string) => void;
+  onNavigateToCreateTournament?: () => void;
   isAdmin: boolean;
   onOpenMatchEdit: (match: Match) => void;
   onOpenAddMatch: () => void;
-  onApplyNewMatches: (newMatches: Match[]) => void;
+  onApplyNewMatches: (newMatches: Match[], newTournament?: Tournament) => void;
   selectedSportFilter: string;
   setSelectedSportFilter: (sport: string) => void;
 }
@@ -22,6 +27,11 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
   matches,
   sports,
   registrations,
+  tournaments = [],
+  selectedTournamentFilter = 'all',
+  setSelectedTournamentFilter,
+  onDeleteTournament,
+  onNavigateToCreateTournament,
   isAdmin,
   onOpenMatchEdit,
   onOpenAddMatch,
@@ -31,16 +41,49 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
 }) => {
   const [stageFilter, setStageFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [activeView, setActiveView] = useState<'list' | 'bracket' | 'draw'>('list');
+  const [activeView, setActiveView] = useState<'list' | 'bracket' | 'draw'>('bracket');
   const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(false);
 
-  // Filter matches
-  const filteredMatches = matches.filter((m) => {
+  // Always sync to the newly created tournament if current filter is invalid or 'TOUR-2026-DEFAULT'
+  useEffect(() => {
+    if (tournaments.length > 0 && setSelectedTournamentFilter) {
+      const exists = tournaments.some((t) => t.id === selectedTournamentFilter);
+      if (!exists && selectedTournamentFilter !== 'all') {
+        setSelectedTournamentFilter(tournaments[0].id);
+      }
+    }
+  }, [tournaments, selectedTournamentFilter, setSelectedTournamentFilter]);
+
+  // Active selected tournament info (always falls back to the newest tournament tournaments[0])
+  const activeTournament = tournaments.find((t) => t.id === selectedTournamentFilter);
+
+  // Filter matches by tournament first, then sport/stage/status
+  const matchesByTournament =
+    selectedTournamentFilter === 'all' || !activeTournament
+      ? matches
+      : matches.filter(
+          (m) =>
+            m.tournamentId === activeTournament.id ||
+            (!m.tournamentId && m.sportId === activeTournament.sportId)
+        );
+
+  // Sơ đồ nhánh (Bracket) luôn hiển thị và in cho giải đấu vừa tạo hoặc đang chọn
+  const bracketTournament = activeTournament || (tournaments.length > 0 ? tournaments[0] : undefined);
+  const bracketMatches = bracketTournament
+    ? matches.filter(
+        (m) =>
+          m.tournamentId === bracketTournament.id ||
+          (!m.tournamentId && m.sportId === bracketTournament.sportId)
+      )
+    : matches;
+
+  const filteredMatches = matchesByTournament.filter((m) => {
     const matchSport = selectedSportFilter === 'all' || m.sportId === selectedSportFilter;
     const matchStage = stageFilter === 'all' || m.stage === stageFilter;
     const matchStatus = statusFilter === 'all' || m.status === statusFilter;
     return matchSport && matchStage && matchStatus;
   });
+
 
   return (
     <div className="py-8 bg-white min-h-screen text-slate-900">
@@ -120,10 +163,216 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
           </div>
         </div>
 
+        {/* ============================================================== */}
+        {/* KHU VỰC CÁC GIẢI ĐẤU ĐỘC LẬP / RIÊNG BIỆT (KHÔNG NHẬP CHUNG)    */}
+        {/* ============================================================== */}
+        <div className="bg-slate-50 border-2 border-slate-300 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-500 shrink-0" />
+                <h2 className="text-base sm:text-lg font-black text-blue-950 font-sans tracking-tight">
+                  Các Giải Đấu Riêng Biệt ({tournaments.length} Giải Độc Lập)
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  Lưu Riêng Lẻ
+                </span>
+              </div>
+              <p className="text-xs text-slate-600">
+                Mỗi giải đấu được quản lý độc lập với lịch thi đấu và sơ đồ nhánh riêng biệt, <strong>không nhập chung vào 1 giải đấu chung</strong>.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {setSelectedTournamentFilter && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedTournamentFilter('all')}
+                  className={`px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                    selectedTournamentFilter === 'all'
+                      ? 'bg-blue-950 text-amber-300 shadow border border-amber-400/60'
+                      : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-300'
+                  }`}
+                >
+                  Xem Toàn Bộ Giải
+                </button>
+              )}
+              {onNavigateToCreateTournament && (
+                <button
+                  type="button"
+                  onClick={onNavigateToCreateTournament}
+                  className="px-4 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-blue-950 rounded-xl text-xs font-black shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 text-blue-950" />
+                  <span>+ Khởi Tạo Giải Mới</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Tournament Grid Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            {tournaments.map((tour) => {
+              const sp = sports.find((s) => s.id === tour.sportId);
+              const isSelected = selectedTournamentFilter === tour.id;
+              const tourMatchesCount = matches.filter((m) => m.tournamentId === tour.id).length;
+
+              return (
+                <div
+                  key={tour.id}
+                  onClick={() => {
+                    if (setSelectedTournamentFilter) {
+                      setSelectedTournamentFilter(tour.id);
+                    }
+                    setSelectedSportFilter(tour.sportId);
+                  }}
+                  className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between gap-3 shadow-sm relative ${
+                    isSelected
+                      ? 'bg-gradient-to-br from-blue-950 via-blue-900 to-indigo-950 text-white border-amber-400 ring-4 ring-amber-400/25 shadow-lg'
+                      : 'bg-white hover:bg-slate-50 text-slate-900 border-slate-200 hover:border-blue-400'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black uppercase ${
+                        isSelected ? 'bg-amber-400 text-blue-950' : 'bg-blue-50 text-blue-950 border border-blue-200'
+                      }`}>
+                        {sp?.name || tour.sportId}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {isSelected && (
+                          <span className="text-amber-400 text-[10px] font-black uppercase flex items-center gap-1">
+                            ★ Đang chọn
+                          </span>
+                        )}
+                        {isAdmin && onDeleteTournament && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`Bạn có chắc chắn muốn xóa riêng giải đấu "${tour.name}" không? Các giải khác sẽ được giữ nguyên.`)) {
+                                onDeleteTournament(tour.id);
+                              }
+                            }}
+                            className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                              isSelected ? 'text-blue-300 hover:text-rose-400 hover:bg-white/10' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                            }`}
+                            title="Xóa giải đấu này"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <h4 className="font-extrabold text-xs sm:text-sm line-clamp-2 leading-snug">
+                      {tour.name}
+                    </h4>
+                    {tour.subCategory && (
+                      <p className={`text-[11px] font-medium line-clamp-1 mt-1 ${
+                        isSelected ? 'text-blue-200' : 'text-slate-500'
+                      }`}>
+                        {tour.subCategory}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className={`pt-2 border-t text-[10px] font-semibold flex items-center justify-between ${
+                    isSelected ? 'border-blue-800 text-blue-200' : 'border-slate-100 text-slate-500'
+                  }`}>
+                    <span>
+                      {tour.format === 'group_knockout'
+                        ? `Đấu bảng loại trực tiếp (${tour.numGroups || 2} bảng)`
+                        : tour.format === 'round_robin'
+                        ? (tour.numGroups && tour.numGroups > 1 ? `Đấu vòng loại (${tour.numGroups} bảng)` : 'Đấu vòng loại')
+                        : tour.format === 'knockout'
+                        ? (tour.numGroups && tour.numGroups > 1 ? `Đấu loại trực tiếp (${tour.numGroups} bảng/nhánh)` : 'Đấu loại trực tiếp')
+                        : `Đấu theo bảng (${tour.numGroups || 2} bảng)`}
+                    </span>
+                    <span className={`font-mono font-bold px-2 py-0.5 rounded ${
+                      isSelected ? 'bg-blue-800 text-amber-300' : 'bg-slate-100 text-blue-950'
+                    }`}>
+                      {tourMatchesCount} trận
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Active Tournament Detail Banner if specific tournament selected */}
+        {activeTournament && (
+          <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 text-blue-950 p-4 sm:p-5 rounded-2xl border-2 border-amber-300 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-950 text-amber-300">
+                  Giải Đấu Đang Chọn Riêng Biệt
+                </span>
+                <span className="text-xs font-black text-blue-900">
+                  {sports.find((s) => s.id === activeTournament.sportId)?.name} · {activeTournament.subCategory || 'Toàn Trường'}
+                </span>
+                <span className="font-mono text-[10px] bg-white/70 px-2 py-0.5 rounded text-blue-950 font-bold">
+                  Mã: {activeTournament.id}
+                </span>
+              </div>
+              <h3 className="text-xl font-black text-blue-950 tracking-tight">
+                {activeTournament.name}
+              </h3>
+              <p className="text-xs text-blue-900/90 font-medium flex flex-wrap items-center gap-3">
+                <span>📍 {activeTournament.venue || 'Sân THPT Phú Lâm'}</span>
+                <span>📅 {activeTournament.startDate} ({activeTournament.startTime})</span>
+                <span>⚔️ {matchesByTournament.length} trận đấu riêng của giải</span>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 self-start md:self-auto">
+              {onNavigateToCreateTournament && (
+                <button
+                  onClick={onNavigateToCreateTournament}
+                  className="px-3.5 py-2 bg-blue-950 hover:bg-blue-900 text-amber-300 text-xs font-black rounded-xl shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Tạo Giải Mới</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Filter Controls Bar in Crisp White Card */}
         <div className="bg-white p-4 rounded-2xl border-2 border-slate-200 shadow-md flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
             
+            {/* Tournament Selector Dropdown */}
+            <div className="flex items-center gap-1.5">
+              <Trophy className="w-4 h-4 text-amber-500 shrink-0" />
+              <select
+                value={selectedTournamentFilter}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (setSelectedTournamentFilter) {
+                    setSelectedTournamentFilter(val);
+                  }
+                  if (val !== 'all') {
+                    const tour = tournaments.find((t) => t.id === val);
+                    if (tour) setSelectedSportFilter(tour.sportId);
+                  }
+                }}
+                className="bg-amber-50 border-2 border-amber-300 text-blue-950 text-xs font-black px-3 py-2 rounded-lg focus:outline-none focus:border-blue-700 shadow-sm"
+              >
+                <option value="all">🏆 Xem Tổng Hợp Tất Cả Giải ({tournaments.length || 1})</option>
+                {tournaments.map((t) => {
+                  const spName = sports.find((s) => s.id === t.sportId)?.name || t.sportId;
+                  return (
+                    <option key={t.id} value={t.id}>
+                      🏆 {t.name} ({spName})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
             {/* Sport Filter */}
             <div className="flex items-center gap-1.5">
               <Filter className="w-4 h-4 text-blue-900" />
@@ -140,6 +389,7 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
                 ))}
               </select>
             </div>
+
 
             {/* Stage Filter */}
             <select
@@ -221,9 +471,16 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
                     <div>
                       {/* Top Header */}
                       <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                        <span className="text-xs font-extrabold text-blue-900 font-sans">
-                          {sp?.name || m.sportId} · {m.stage}
-                        </span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs font-extrabold text-blue-900 font-sans">
+                            {sp?.name || m.sportId} · {m.stage}
+                          </span>
+                          {m.tournamentName && (
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded max-w-[190px] truncate" title={m.tournamentName}>
+                              🏆 {m.tournamentName}
+                            </span>
+                          )}
+                        </div>
 
                         {m.status === 'Live' && (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-100 text-red-600 text-[10px] font-black tracking-wider uppercase border border-red-300 animate-pulse">
@@ -318,18 +575,20 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
           </div>
         )}
 
-        {/* View Mode 2: Knockout Bracket Visualizer Tree */}
+        {/* View Mode 2: Knockout Bracket Visualizer Tree (Hiển thị riêng cho từng giải độc lập) */}
         {activeView === 'bracket' && (
           <div className="space-y-6">
             {/* 1 Master Unified Tournament Bracket Tree with Every Match Pair, Branch Connectors & Advancement */}
             <TournamentBracketTree
-              matches={matches}
+              matches={bracketMatches}
               sports={sports}
               registrations={registrations}
-              selectedSportId={selectedSportFilter}
+              selectedSportId={bracketTournament ? bracketTournament.sportId : selectedSportFilter}
               onOpenMatchEdit={onOpenMatchEdit}
               isAdmin={isAdmin}
               onSwitchToDraw={() => setActiveView('draw')}
+              tournamentName={bracketTournament?.name}
+              tournamentTeamsCount={bracketTournament?.teamsCount}
             />
           </div>
         )}
@@ -339,8 +598,8 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
           <GroupAndDrawTool
             sports={sports}
             registrations={registrations}
-            onApplyMatches={(newMatches) => {
-              onApplyNewMatches(newMatches);
+            onApplyMatches={(newMatches, newTour) => {
+              onApplyNewMatches(newMatches, newTour);
               setActiveView('bracket');
             }}
           />
@@ -349,13 +608,16 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
         {/* Print Bracket Diagram Modal */}
         {isPrintModalOpen && (
           <PrintBracketModal
-            matches={matches}
+            matches={bracketMatches}
             sports={sports}
             registrations={registrations}
-            selectedSportId={selectedSportFilter}
+            selectedSportId={bracketTournament ? bracketTournament.sportId : selectedSportFilter}
             onClose={() => setIsPrintModalOpen(false)}
+            tournamentName={bracketTournament?.name}
+            tournamentTeamsCount={bracketTournament?.teamsCount}
           />
         )}
+
 
       </div>
     </div>

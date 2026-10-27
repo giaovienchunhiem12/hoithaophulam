@@ -1,4 +1,4 @@
-import { TournamentData, SportCategory, MedalTally, Registration, Match, Announcement, SportId } from '../types/sports';
+import { TournamentData, SportCategory, MedalTally, Registration, Match, Announcement, SportId, Tournament } from '../types/sports';
 
 export const initialSports: SportCategory[] = [
   {
@@ -186,6 +186,33 @@ export const PRESET_EMBLEMS = [
   { icon: '☄️', name: 'Sao băng' },
 ];
 
+export const isSystemPlaceholderTeam = (teamName?: string, registrations: Registration[] = []): boolean => {
+  if (!teamName) return true;
+  const trimmed = teamName.trim();
+  if (!trimmed || trimmed === '---') return true;
+
+  // If this exact name exists in registrations, it is NEVER a placeholder
+  if (registrations.length > 0 && registrations.some((r) => r.className.trim() === trimmed)) {
+    return false;
+  }
+
+  // System placeholder patterns generated for bracket progression
+  if (
+    /^---\s*\(Trống\)\s*---$/i.test(trimmed) ||
+    trimmed.includes('--- Trống ---') ||
+    trimmed.includes('Chờ xếp') ||
+    /^(Thắng|Thua)\s+(Trận|Vòng|Tứ Kết|Bán Kết|Nhánh|Cặp|BK|TK|R\d|V\d|VL|Sơ Loại|Playoff)/i.test(trimmed) ||
+    /^(Nhất|Nhì|Hạng\s+\d+|Quán quân|Á quân)\s+(Bảng|Vòng|Nhánh|Toàn)/i.test(trimmed) ||
+    /^(Đội hạt giống|Hạt giống|Hạt Giống|Đội Đấu Vòng Loại|Đội Đấu Loại|Vị trí\s+[A-Z]?\d+|Miễn đấu|Miễn vòng|Đặc cách|Chờ đối thủ)/i.test(trimmed) ||
+    /^Đội\s+\d+(\s+Bảng\s+[A-Z])?$/i.test(trimmed) ||
+    /^[A-Z]\d+\s*\(Đội\s+\d+\)$/i.test(trimmed)
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
 export const getTeamEmblem = (teamName: string, registrations: Registration[] = []): string => {
   if (!teamName) return '🏅';
   const clean = teamName.replace(/^Lớp\s+/i, '').trim().toUpperCase();
@@ -197,14 +224,14 @@ export const getTeamEmblem = (teamName: string, registrations: Registration[] = 
   });
   if (reg?.emblem) return reg.emblem;
 
-  // 2. Check default class emblems mapping
-  for (const [cls, emb] of Object.entries(DEFAULT_CLASS_EMBLEMS)) {
-    if (clean.includes(cls)) return emb;
+  // 2. Status/placeholder labels in bracket progression (check before class match)
+  if (isSystemPlaceholderTeam(teamName, registrations)) {
+    return '⏳';
   }
 
-  // 3. Status/placeholder labels in bracket progression
-  if (teamName.includes('Thắng') || teamName.includes('Nhất') || teamName.includes('Nhì') || teamName.includes('Chờ')) {
-    return '⏳';
+  // 3. Check default class emblems mapping
+  for (const [cls, emb] of Object.entries(DEFAULT_CLASS_EMBLEMS)) {
+    if (clean.includes(cls)) return emb;
   }
 
   return '🏅';
@@ -263,10 +290,15 @@ export const initialMedalTallies: MedalTally[] = [];
 
 export const initialAnnouncements: Announcement[] = [];
 
+export const initialTournaments: Tournament[] = [];
+
 export const initialTournamentData: TournamentData = {
   sports: initialSports,
   registrations: initialRegistrations,
   matches: initialMatches,
   medalTallies: initialMedalTallies,
-  announcements: initialAnnouncements
+  announcements: initialAnnouncements,
+  tournaments: initialTournaments,
+  activeTournamentId: ''
 };
+

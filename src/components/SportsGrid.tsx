@@ -1,15 +1,23 @@
-import React from 'react';
-import { SportCategory, SportId, Match } from '../types/sports';
-import { ArrowRight, MapPin, Trash2, Plus } from 'lucide-react';
+import React, { useState } from 'react';
+import { SportCategory, SportId, Match, Registration, TournamentData } from '../types/sports';
+import { ArrowRight, MapPin, Trash2, Plus, Eye, Trophy } from 'lucide-react';
 import { getSportIcon } from '../utils/sportIcons';
+import { SportDetailCardModal } from './SportDetailCardModal';
 
 interface SportsGridProps {
   sports: SportCategory[];
-  matches: Match[]; // Added matches to check if tournament exists
+  matches: Match[];
+  registrations: Registration[];
+  tournamentData: TournamentData;
+  isAdmin: boolean;
   onSelectSportForRegister: (sportId: SportId) => void;
   onSelectSportForSchedule: (sportId: SportId) => void;
-  onDeleteSport: (sportId: SportId) => void; // Added delete function
-  selectedSportFilter: string;
+  onDeleteSport: (sportId: SportId) => void;
+  onUpdateRegistration: (updatedReg: Registration) => void;
+  onDeleteRegistration: (id: string) => void;
+  onAddNewMatch: (match: Match) => void;
+  onUpdateMatch: (match: Match) => void;
+  onDeleteMatch: (id: string) => void;
 }
 
 const renderSportIllustrationIcon = (id: SportId) => {
@@ -30,10 +38,20 @@ const renderSportIllustrationIcon = (id: SportId) => {
 export const SportsGrid: React.FC<SportsGridProps> = ({
   sports,
   matches,
+  registrations,
+  tournamentData,
+  isAdmin,
   onSelectSportForRegister,
   onSelectSportForSchedule,
   onDeleteSport,
+  onUpdateRegistration,
+  onDeleteRegistration,
+  onAddNewMatch,
+  onUpdateMatch,
+  onDeleteMatch,
 }) => {
+  const [activeDetailSport, setActiveDetailSport] = useState<SportCategory | null>(null);
+
   return (
     <section className="py-12 bg-white text-slate-900">
       <div className="max-w-full px-4 sm:px-6 lg:px-8 mx-auto space-y-8">
@@ -42,13 +60,13 @@ export const SportsGrid: React.FC<SportsGridProps> = ({
         <div className="bg-gradient-to-r from-blue-950 via-blue-900 to-indigo-950 text-white rounded-2xl p-6 sm:p-8 border-4 border-amber-400/90 shadow-xl flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <div className="text-xs font-black uppercase tracking-widest text-amber-300 mb-1">
-              Danh Mục Thi Đấu Chính Thức
+              Danh Mục Môn Thi Đấu & Thẻ Thông Tin Giải Đấu
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-white font-sans font-bold tracking-tight">
               09 Môn Thể Thao Học Đường THPT Phú Lâm
             </h2>
             <p className="text-xs sm:text-sm text-blue-100/90 mt-1">
-              Chọn bộ môn để xem thể thức, đăng ký thi đấu trực tuyến hoặc theo dõi lịch thi đấu.
+              Mỗi bộ môn có thẻ riêng hiển thị đầy đủ: Danh sách đăng ký, Lịch thi đấu, Cây sơ đồ và Kết quả.
             </p>
           </div>
         </div>
@@ -57,6 +75,8 @@ export const SportsGrid: React.FC<SportsGridProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {sports.map((sport) => {
             const hasTournament = matches.some((m) => m.sportId === sport.id);
+            const sportRegCount = registrations.filter((r) => r.sportId === sport.id).length;
+            const sportMatchCount = matches.filter((m) => m.sportId === sport.id).length;
 
             return (
               <div
@@ -64,7 +84,7 @@ export const SportsGrid: React.FC<SportsGridProps> = ({
                 className={`bg-white rounded-2xl border-2 p-5 flex flex-col justify-between group shadow-md hover:shadow-xl transition-all ${
                   hasTournament 
                     ? 'border-blue-300 hover:border-blue-700' 
-                    : 'border-slate-200 opacity-60 hover:opacity-100'
+                    : 'border-slate-200 opacity-80 hover:opacity-100'
                 }`}
               >
                 <div>
@@ -92,22 +112,43 @@ export const SportsGrid: React.FC<SportsGridProps> = ({
                   <p className="text-xs text-slate-600 mt-3 line-clamp-2 leading-relaxed">
                     {sport.description}
                   </p>
+
+                  {/* Badge Stats for each sport card */}
+                  <div className="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-100 text-xs font-bold">
+                    <div className="bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                      <span className="text-slate-500">Đăng ký:</span>
+                      <span className="text-blue-900 font-black">{sportRegCount} đội</span>
+                    </div>
+                    <div className="bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 flex items-center justify-between">
+                      <span className="text-slate-500">Trận đấu:</span>
+                      <span className="text-amber-700 font-black">{sportMatchCount} trận</span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Action Buttons */}
                 <div className="mt-5 pt-4 border-t border-slate-100 flex items-center gap-2">
+                  <button
+                    onClick={() => setActiveDetailSport(sport)}
+                    className="flex-1 py-2 px-3 bg-gradient-to-r from-blue-950 to-indigo-900 hover:from-blue-900 hover:to-indigo-800 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Xem Thẻ Chi Tiết Môn</span>
+                  </button>
+
                   {hasTournament ? (
                     <>
                       <button
                         onClick={() => onSelectSportForSchedule(sport.id)}
-                        className="flex-1 py-2 px-3 bg-blue-900 hover:bg-blue-800 text-white font-bold text-xs rounded-xl transition-colors shadow-sm"
+                        className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-xl transition-colors shadow-sm"
+                        title="Quản lý lịch / Sơ đồ"
                       >
-                        <span>Sửa Giải Đấu</span>
+                        <Trophy className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => onDeleteSport(sport.id)}
                         className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl transition-colors shadow-sm"
-                        title="Xóa giải đấu"
+                        title="Xóa giải đấu môn này"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -115,10 +156,10 @@ export const SportsGrid: React.FC<SportsGridProps> = ({
                   ) : (
                     <button
                       onClick={() => onSelectSportForRegister(sport.id)}
-                      className="flex-1 py-2 px-3 bg-slate-100 hover:bg-emerald-500 hover:text-white text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 shadow-sm"
+                      className="py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 shadow-sm"
+                      title="Khởi tạo giải đấu"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>Khởi Tạo Giải Đấu</span>
                     </button>
                   )}
                 </div>
@@ -127,6 +168,21 @@ export const SportsGrid: React.FC<SportsGridProps> = ({
           })}
         </div>
       </div>
+
+      {/* Sport Detail Card Modal */}
+      {activeDetailSport && (
+        <SportDetailCardModal
+          sport={activeDetailSport}
+          tournamentData={tournamentData}
+          isAdmin={isAdmin}
+          onClose={() => setActiveDetailSport(null)}
+          onUpdateRegistration={onUpdateRegistration}
+          onDeleteRegistration={onDeleteRegistration}
+          onAddNewMatch={onAddNewMatch}
+          onUpdateMatch={onUpdateMatch}
+          onDeleteMatch={onDeleteMatch}
+        />
+      )}
     </section>
   );
 };

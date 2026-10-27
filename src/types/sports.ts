@@ -67,6 +67,25 @@ export interface Match {
   mvpPlayer?: string;
   commentary?: string;
   groupName?: string; // "Bảng A", "Bảng B"
+  tournamentId?: string; // ID of the tournament this match belongs to
+  tournamentName?: string; // Name of the tournament this match belongs to
+}
+
+export interface Tournament {
+  id: string; // e.g. "TOUR-1728739182"
+  name: string; // e.g. "Giải Hội Thao Học Đường THPT Phú Lâm 2026"
+  sportId: SportId;
+  subCategory?: string;
+  format?: 'round_robin' | 'knockout' | 'groups' | 'group_knockout';
+  numGroups?: number;
+  startDate?: string;
+  startTime?: string;
+  venue?: string;
+  notes?: string;
+  createdAt: string;
+  status: 'Upcoming' | 'Live' | 'Finished';
+  teamsCount?: number;
+  matchesCount?: number;
 }
 
 export interface MedalTally {
@@ -94,4 +113,7 @@ export interface TournamentData {
   matches: Match[];
   medalTallies: MedalTally[];
   announcements: Announcement[];
+  tournaments?: Tournament[];
+  activeTournamentId?: string;
 }
+

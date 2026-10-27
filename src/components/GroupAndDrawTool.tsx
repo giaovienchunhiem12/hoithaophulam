@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { SportCategory, Registration, Match, SportId } from '../types/sports';
+import { SportCategory, Registration, Match, SportId, Tournament } from '../types/sports';
 import { Shuffle, Trophy, CheckCircle, Sparkles, RefreshCw, ArrowRight, Layers, ShieldCheck, Flame, Edit3, Grid, GitBranch, Zap, MoveHorizontal, Dices } from 'lucide-react';
 import { InteractiveBracketDraw } from './InteractiveBracketDraw';
 
 interface GroupAndDrawToolProps {
   sports: SportCategory[];
   registrations: Registration[];
-  onApplyMatches: (newMatches: Match[]) => void;
+  onApplyMatches: (newMatches: Match[], newTournament?: Tournament) => void;
   onClose?: () => void;
+  tournamentName?: string;
 }
 
 const ALL_CLASSES = [
@@ -440,19 +441,31 @@ export const GroupAndDrawTool: React.FC<GroupAndDrawToolProps> = ({
 
     if (generatedMatches.length === 0) return;
 
-    for (const m of generatedMatches) {
-      try {
-        await fetch('/api/match/add', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(m)
-        });
-      } catch (e) {
-        console.error(e);
-      }
-    }
+    const tourId = `TOUR-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const effectiveTourName = `Giải ${currentSport.name} THPT Phú Lâm 2026`;
+    const newTournamentObj: Tournament = {
+      id: tourId,
+      name: effectiveTourName,
+      sportId: selectedSportId,
+      subCategory: currentSport.subCategories[0] || 'Chính thức',
+      format: drawMode === 'knockout' ? 'knockout' : 'group_knockout',
+      numGroups,
+      startDate: today,
+      startTime: '08:00',
+      venue: currentSport.venue,
+      createdAt: new Date().toISOString(),
+      status: 'Upcoming',
+      teamsCount: activeGroups.reduce((acc, g) => acc + g.teams.length, 0) || pairingResults.length * 2,
+      matchesCount: generatedMatches.length,
+    };
 
-    onApplyMatches(generatedMatches);
+    const matchesWithTour: Match[] = generatedMatches.map((m) => ({
+      ...m,
+      tournamentId: tourId,
+      tournamentName: effectiveTourName
+    }));
+
+    onApplyMatches(matchesWithTour, newTournamentObj);
     setAppliedSuccess(true);
   };
 

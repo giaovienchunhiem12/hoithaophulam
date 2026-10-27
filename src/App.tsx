@@ -8,8 +8,8 @@ import { ResultsAndLeaderboard } from './components/ResultsAndLeaderboard';
 import { AICommentator } from './components/AICommentator';
 import { Announcements } from './components/Announcements';
 import { MatchEditModal } from './components/MatchEditModal';
-import { TournamentData, Match, Registration, Announcement, SportId } from './types/sports';
-import { initialTournamentData, getDefault20Registrations } from './data/mockSportsData';
+import { TournamentData, Match, Registration, Announcement, SportId, Tournament } from './types/sports';
+import { initialTournamentData, getDefault20Registrations, isSystemPlaceholderTeam, getTeamEmblem } from './data/mockSportsData';
 import { SCHOOL_LOGO_DATA_URI } from './assets/logoData';
 import { Trophy, Award, Heart } from 'lucide-react';
 
@@ -19,6 +19,9 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedSportFilter, setSelectedSportFilter] = useState<string>('all');
+  const [selectedTournamentFilter, setSelectedTournamentFilter] = useState<string>(
+    initialTournamentData.activeTournamentId || (initialTournamentData.tournaments?.[0]?.id ?? 'all')
+  );
   const [preselectedMatchForAI, setPreselectedMatchForAI] = useState<Match | null>(null);
 
   // Modal State
@@ -30,18 +33,89 @@ export default function App() {
       .then((res) => res.json())
       .then((serverData) => {
         if (serverData && serverData.sports) {
-          setData(serverData);
+          const existingRegs: Registration[] = Array.isArray(serverData.registrations)
+            ? [...serverData.registrations]
+            : [];
+          const existingKeySet = new Set(
+            existingRegs.map((r) => `${r.sportId}__${r.className.trim()}`)
+          );
+          const recoveredRegs: Registration[] = [];
+
+          if (Array.isArray(serverData.matches)) {
+            serverData.matches.forEach((m: Match, idx: number) => {
+              [m.teamA, m.teamB].forEach((tName, sideIdx) => {
+                if (!tName || isSystemPlaceholderTeam(tName, existingRegs)) return;
+                const clean = tName.trim();
+                const key = `${m.sportId}__${clean}`;
+                if (existingKeySet.has(key)) return;
+                existingKeySet.add(key);
+
+                const unitMatch = clean.match(/\(([^)]+)\)/);
+                const unit = unitMatch ? unitMatch[1].trim() : clean;
+                const athleteName = clean.replace(/\s*\([^)]+\)\s*$/, '').trim() || clean;
+                const gradeMatch = unit.match(/\b(10|11|12)\b/);
+                const grade = gradeMatch ? parseInt(gradeMatch[1], 10) : 10;
+
+                recoveredRegs.push({
+                  id: `REG-SYNC-${idx}-${sideIdx}`,
+                  sportId: m.sportId,
+                  subCategory: m.subCategory?.split(' - ')[0] || 'Chính thức',
+                  className: clean,
+                  grade,
+                  captainName: athleteName,
+                  phone: '0900000000',
+                  teacherName: unit !== clean ? `Đơn vị: ${unit}` : `GVCN ${unit}`,
+                  members: [{ name: athleteName, shirtSize: 'M', jerseyNumber: 1 }],
+                  status: 'Approved',
+                  registeredAt: m.date || '2026-10-12',
+                  emblem: getTeamEmblem(clean, existingRegs),
+                  notes: 'Đồng bộ từ danh sách đội thi đấu của giải'
+                });
+              });
+            });
+          }
+
+          const mergedRegistrations = [...existingRegs, ...recoveredRegs];
+          setData({
+            ...serverData,
+            registrations: mergedRegistrations
+          });
+
+          if (recoveredRegs.length > 0 && existingRegs.length === 0) {
+            fetch('/api/register/bulk', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ registrations: recoveredRegs })
+            }).catch(() => {});
+          }
+
+          if (serverData.tournaments && serverData.tournaments.length > 0) {
+            const activeTour =
+              serverData.tournaments.find((t: Tournament) => t.id === serverData.activeTournamentId) ||
+              serverData.tournaments[0];
+            setSelectedTournamentFilter(activeTour.id);
+            setSelectedSportFilter(activeTour.sportId);
+          }
         }
       })
       .catch((err) => console.warn('Using initial local fallback data:', err));
   }, []);
 
   // Handlers
-  const handleNewRegistration = (newReg: Registration) => {
+  const handleNewRegistration = async (newReg: Registration) => {
     setData((prev) => ({
       ...prev,
       registrations: [newReg, ...prev.registrations]
     }));
+    try {
+      await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newReg)
+      });
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleUpdateRegistration = async (updatedReg: Registration) => {
@@ -60,11 +134,20 @@ export default function App() {
     }
   };
 
-  const handleBulkRegistration = (newRegs: Registration[]) => {
+  const handleBulkRegistration = async (newRegs: Registration[]) => {
     setData((prev) => ({
       ...prev,
       registrations: [...newRegs, ...prev.registrations]
     }));
+    try {
+      await fetch('/api/register/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registrations: newRegs })
+      });
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleDeleteRegistration = async (id: string) => {
@@ -98,43 +181,68 @@ export default function App() {
     }
   };
 
-  const handleCreateTournament = async (newMatches: Match[]) => {
+  const handleCreateTournament = async (newMatches: Match[], newTournament?: Tournament) => {
     setData((prev) => {
+      const prevTournaments = prev.tournaments || [];
+      const updatedTournaments = newTournament
+        ? [newTournament, ...prevTournaments.filter((t) => t.id !== newTournament.id)]
+        : prevTournaments;
+
+      // PRESERVE ALL PREVIOUS MATCHES! Only replace matches if exact same ID
       const newIds = new Set(newMatches.map((m) => m.id));
       const remainingMatches = prev.matches.filter((m) => !newIds.has(m.id));
       return {
         ...prev,
-        matches: [...newMatches, ...remainingMatches]
+        tournaments: updatedTournaments,
+        matches: [...newMatches, ...remainingMatches],
+        activeTournamentId: newTournament?.id || prev.activeTournamentId
       };
     });
-    if (newMatches.length > 0) {
+
+    if (newTournament) {
+      setSelectedTournamentFilter(newTournament.id);
+      setSelectedSportFilter(newTournament.sportId);
+    } else if (newMatches.length > 0) {
       setSelectedSportFilter(newMatches[0].sportId);
     }
     setActiveTab('schedule');
+
     try {
       await fetch('/api/tournament/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches: newMatches })
+        body: JSON.stringify({ matches: newMatches, tournament: newTournament })
       });
     } catch (e) {
       console.warn('Updated tournament locally:', e);
     }
   };
 
-  const handleApplyNewMatches = (newMatches: Match[]) => {
-    setData((prev) => {
-      const newIds = new Set(newMatches.map((m) => m.id));
-      const remainingMatches = prev.matches.filter((m) => !newIds.has(m.id));
-      return {
-        ...prev,
-        matches: [...newMatches, ...remainingMatches]
-      };
-    });
-    if (newMatches.length > 0) {
-      setSelectedSportFilter(newMatches[0].sportId);
+  const handleDeleteTournament = async (tournamentId: string) => {
+    setData((prev) => ({
+      ...prev,
+      tournaments: (prev.tournaments || []).filter((t) => t.id !== tournamentId),
+      matches: prev.matches.filter((m) => m.tournamentId !== tournamentId)
+    }));
+
+    if (selectedTournamentFilter === tournamentId) {
+      setSelectedTournamentFilter('all');
     }
-    setActiveTab('schedule');
+
+    try {
+      await fetch('/api/tournament/delete-tournament', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tournamentId })
+      });
+    } catch (e) {
+      console.warn('Deleted tournament locally:', e);
+    }
+  };
+
+
+  const handleApplyNewMatches = (newMatches: Match[], newTournament?: Tournament) => {
+    handleCreateTournament(newMatches, newTournament);
   };
 
   const handleMatchUpdate = async (updatedMatchData: Partial<Match>) => {
@@ -248,9 +356,28 @@ export default function App() {
             <SportsGrid
               sports={data.sports}
               matches={data.matches}
-              selectedSportFilter={selectedSportFilter}
+              registrations={data.registrations}
+              tournamentData={data}
+              isAdmin={isAdmin}
               onSelectSportForRegister={handleSelectSportForRegister}
               onSelectSportForSchedule={handleSelectSportForSchedule}
+              onUpdateRegistration={handleUpdateRegistration}
+              onDeleteRegistration={handleDeleteRegistration}
+              onAddNewMatch={(match) => {
+                setData(prev => ({ ...prev, matches: [...prev.matches, match] }));
+              }}
+              onUpdateMatch={(match) => {
+                setData(prev => ({
+                  ...prev,
+                  matches: prev.matches.map(m => m.id === match.id ? match : m)
+                }));
+              }}
+              onDeleteMatch={(id) => {
+                setData(prev => ({
+                  ...prev,
+                  matches: prev.matches.filter(m => m.id !== id)
+                }));
+              }}
               onDeleteSport={(sportId) => {
                 fetch('/api/tournament/delete', {
                   method: 'POST',
@@ -273,6 +400,15 @@ export default function App() {
           <TournamentManager
             sports={data.sports}
             registrations={data.registrations}
+            tournaments={data.tournaments || []}
+            activeTournamentId={selectedTournamentFilter}
+            onSelectTournament={(tourId) => {
+              setSelectedTournamentFilter(tourId);
+              const tour = data.tournaments?.find((t) => t.id === tourId);
+              if (tour) setSelectedSportFilter(tour.sportId);
+              setActiveTab('schedule');
+            }}
+            onDeleteTournament={handleDeleteTournament}
             onNewRegistration={handleNewRegistration}
             onUpdateRegistration={handleUpdateRegistration}
             onBulkRegistration={handleBulkRegistration}
@@ -289,14 +425,20 @@ export default function App() {
             matches={data.matches}
             sports={data.sports}
             registrations={data.registrations}
+            tournaments={data.tournaments || []}
+            selectedTournamentFilter={selectedTournamentFilter}
+            setSelectedTournamentFilter={setSelectedTournamentFilter}
             isAdmin={isAdmin}
             onOpenMatchEdit={(match) => setEditingMatch(match)}
             onOpenAddMatch={handleAddMatch}
             onApplyNewMatches={handleApplyNewMatches}
             selectedSportFilter={selectedSportFilter}
             setSelectedSportFilter={setSelectedSportFilter}
+            onDeleteTournament={handleDeleteTournament}
+            onNavigateToCreateTournament={() => setActiveTab('tournament')}
           />
         )}
+
 
         {activeTab === 'results' && (
           <ResultsAndLeaderboard
@@ -304,6 +446,9 @@ export default function App() {
             matches={data.matches}
             sports={data.sports}
             registrations={data.registrations}
+            tournaments={data.tournaments || []}
+            selectedTournamentFilter={selectedTournamentFilter}
+            setSelectedTournamentFilter={setSelectedTournamentFilter}
             selectedSportFilter={selectedSportFilter}
             setSelectedSportFilter={setSelectedSportFilter}
             onGenerateAICommentary={handleGenerateAIForMatch}

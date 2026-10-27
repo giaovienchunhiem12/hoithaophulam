@@ -82,7 +82,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <UserPlus className="w-4 h-4 text-amber-400" />
-              <span>Đăng Ký Thi Đấu</span>
+              <span>Tạo & Quản Lý Giải</span>
             </button>
 
             <button
@@ -180,8 +180,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           className={`flex flex-col items-center gap-1 ${activeTab === 'tournament' || activeTab === 'register' ? 'text-amber-400 font-bold' : 'text-slate-400'}`}
         >
           <UserPlus className="w-4 h-4" />
-          <span>Đăng ký</span>
+          <span>Quản lý giải</span>
         </button>
+
         <button
           onClick={() => setActiveTab('schedule')}
           className={`flex flex-col items-center gap-1 ${activeTab === 'schedule' ? 'text-cyan-400 font-bold' : 'text-slate-400'}`}

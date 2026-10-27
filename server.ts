@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { initialTournamentData, getDefault20Registrations } from './src/data/mockSportsData.js';
-import { Match, Registration, Announcement } from './src/types/sports.js';
+import { Match, Registration, Announcement, Tournament } from './src/types/sports.js';
 
 dotenv.config();
 
@@ -93,16 +93,61 @@ app.post('/api/register/clear', (_req, res) => {
 });
 
 app.post('/api/tournament/create', (req, res) => {
-  const { matches } = req.body;
-  if (Array.isArray(matches) && matches.length > 0) {
-    const newSportId = matches[0].sportId;
-    tournamentState.matches = [
-      ...matches,
-      ...tournamentState.matches.filter((m) => m.sportId !== newSportId),
-    ];
+  const { matches, tournament } = req.body;
+  
+  // 1. Save or update the tournament in tournaments array
+  if (tournament) {
+    if (!tournamentState.tournaments) {
+      tournamentState.tournaments = [];
+    }
+    const existsIdx = tournamentState.tournaments.findIndex((t: Tournament) => t.id === tournament.id);
+    if (existsIdx >= 0) {
+      tournamentState.tournaments[existsIdx] = tournament;
+    } else {
+      tournamentState.tournaments.unshift(tournament);
+    }
+    tournamentState.activeTournamentId = tournament.id;
   }
-  res.json({ success: true, count: tournamentState.matches.length });
+
+  // 2. Add matches WITHOUT wiping out matches of other tournaments or other sports
+  if (Array.isArray(matches) && matches.length > 0) {
+    const newIds = new Set(matches.map((m: Match) => m.id));
+    const remainingMatches = tournamentState.matches.filter((m: Match) => !newIds.has(m.id));
+    tournamentState.matches = [...matches, ...remainingMatches];
+  }
+
+  res.json({ 
+    success: true, 
+    matchesCount: tournamentState.matches.length,
+    tournamentsCount: tournamentState.tournaments?.length || 0,
+    tournaments: tournamentState.tournaments,
+    activeTournamentId: tournamentState.activeTournamentId
+  });
 });
+
+app.post('/api/tournament/delete-tournament', (req, res) => {
+  const { tournamentId } = req.body;
+  if (!tournamentId) {
+    return res.status(400).json({ error: 'Missing tournamentId' });
+  }
+
+  // Delete only matches linked to this tournament
+  tournamentState.matches = tournamentState.matches.filter((m: Match) => m.tournamentId !== tournamentId);
+  if (tournamentState.tournaments) {
+    tournamentState.tournaments = tournamentState.tournaments.filter((t: Tournament) => t.id !== tournamentId);
+  }
+  if (tournamentState.activeTournamentId === tournamentId) {
+    tournamentState.activeTournamentId = tournamentState.tournaments?.[0]?.id || 'all';
+  }
+
+  res.json({ 
+    success: true, 
+    matchesCount: tournamentState.matches.length,
+    tournaments: tournamentState.tournaments,
+    activeTournamentId: tournamentState.activeTournamentId
+  });
+});
+
 
 app.post('/api/match/update', (req, res) => {
   const { id, scoreA, scoreB, setsDetail, status, mvpPlayer, commentary, date, time, venue } = req.body;
