@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { SportCategory, Registration, Match, SportId, Tournament } from '../types/sports';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { SportCategory, Registration, Match, SportId, Tournament, DrawStateRecord } from '../types/sports';
 import { 
   Shuffle, Trophy, Sparkles, CheckCircle2, RotateCcw, ArrowRight, 
   Layers, GitBranch, Play, Flame, RefreshCw, X, Shield, Star, 
@@ -12,6 +12,8 @@ interface InteractiveBracketDrawProps {
   sports: SportCategory[];
   registrations: Registration[];
   selectedSportId?: SportId;
+  activeTournamentId?: string;
+  drawStates?: Record<string, DrawStateRecord>;
   onApplyMatches: (matches: Match[], newTournament?: Tournament) => void;
   onClose?: () => void;
   subCategory?: string;
@@ -35,24 +37,30 @@ export interface BracketSlot {
 export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
   sports,
   registrations,
-  selectedSportId: initialSportId = 'basketball',
+  selectedSportId: initialSportId = 'caro',
+  activeTournamentId,
+  drawStates = {},
   onApplyMatches,
   onClose,
   subCategory: propSubCategory,
   venue: propVenue,
   startDate: propStartDate = '2026-10-12',
-  numGroupsDefault = 2,
+  numGroupsDefault = 1,
   onAddTeamsClick,
   tournamentName: propTournamentName
 }) => {
   const [sportId, setSportId] = useState<SportId>(initialSportId);
-  const [numGroups, setNumGroups] = useState<number>(numGroupsDefault);
+  const savedForSport = drawStates?.[sportId];
+  const [numGroups, setNumGroups] = useState<number>(savedForSport?.numGroups || numGroupsDefault);
   const [customTournamentName, setCustomTournamentName] = useState<string>(
-    propTournamentName || `Giải ${sports.find((s) => s.id === initialSportId)?.name || 'Thể Thao'} THPT Phú Lâm 2026 (Bốc Thăm Riêng Lẻ)`
+    savedForSport?.customTournamentName ||
+      propTournamentName ||
+      `Giải ${sports.find((s) => s.id === initialSportId)?.name || 'Thể Thao'} THPT Phú Lâm 2026`
   );
   const [selectedBranchGroup, setSelectedBranchGroup] = useState<string>('all'); // 'all' or 'Bảng A', 'Bảng B'...
   const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(false);
   const [branchViewMode, setBranchViewMode] = useState<'tree' | 'grid'>('tree');
+  const lastSyncedDrawTimestampRef = useRef<number>(savedForSport?.updatedAt || 0);
 
   // Get active sport
   const currentSport = sports.find((s) => s.id === sportId) || sports[0];
@@ -107,35 +115,27 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
     return pools;
   };
 
-  const [groupPools, setGroupPools] = useState<Record<string, string[]>>(initializeGroupPools);
+  const [groupPools, setGroupPools] = useState<Record<string, string[]>>(() => {
+    if (savedForSport?.groupPools && Object.keys(savedForSport.groupPools).length > 0) {
+      return savedForSport.groupPools;
+    }
+    return initializeGroupPools();
+  });
 
-  // When sportId, numGroups or candidateTeams changes, refresh group pools
+  // When sportId, numGroups or candidateTeams changes, refresh group pools unless saved draw state matches
   useEffect(() => {
+    const remote = drawStates?.[sportId];
+    if (
+      remote &&
+      remote.numGroups === numGroups &&
+      remote.groupPools &&
+      Object.values(remote.groupPools).flat().length === candidateTeams.length
+    ) {
+      setGroupPools(remote.groupPools);
+      return;
+    }
     setGroupPools(initializeGroupPools());
   }, [sportId, numGroups, candidateTeams.length]);
-
-  // Shuffle pools between groups
-  const handleShuffleGroupPools = () => {
-    const totalTeams = [...candidateTeams].sort(() => Math.random() - 0.5);
-    const pools: Record<string, string[]> = {};
-    activeGroupNames.forEach((gn) => (pools[gn] = []));
-
-    if (numGroups === 1) {
-      pools['Bảng A'] = [...totalTeams];
-    } else if (numGroups === 2) {
-      const mid = Math.ceil(totalTeams.length / 2);
-      pools['Bảng A'] = totalTeams.slice(0, mid);
-      pools['Bảng B'] = totalTeams.slice(mid);
-    } else {
-      totalTeams.forEach((team, idx) => {
-        const gName = activeGroupNames[idx % activeGroupNames.length];
-        pools[gName].push(team);
-      });
-    }
-
-    setGroupPools(pools);
-    setBracketSlots(initializeSlots(pools));
-  };
 
   // Calculate dynamic slots per group based on team count in that group
   const getSlotsCountForGroup = (gName: string): number => {
@@ -179,12 +179,88 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
     return slots;
   };
 
-  const [bracketSlots, setBracketSlots] = useState<BracketSlot[]>(() => initializeSlots());
+  const [bracketSlots, setBracketSlots] = useState<BracketSlot[]>(() => {
+    if (savedForSport?.bracketSlots && savedForSport.bracketSlots.length > 0) {
+      return savedForSport.bracketSlots as BracketSlot[];
+    }
+    return initializeSlots();
+  });
 
-  // When sportId, numGroups or candidateTeams changes, re-initialize slots
+  // When sportId, numGroups or candidateTeams changes, re-initialize slots unless saved draw state matches
   useEffect(() => {
-    setBracketSlots(initializeSlots());
+    const remote = drawStates?.[sportId];
+    if (
+      remote &&
+      remote.numGroups === numGroups &&
+      Array.isArray(remote.bracketSlots) &&
+      remote.bracketSlots.length === candidateTeams.length
+    ) {
+      setBracketSlots(remote.bracketSlots as BracketSlot[]);
+      return;
+    }
+    setBracketSlots((prev) => {
+      const fresh = initializeSlots();
+      if (prev.length === fresh.length && prev.some((s) => s.assignedTeam)) {
+        return fresh.map((f, idx) =>
+          prev[idx] && prev[idx].slotId === f.slotId
+            ? { ...f, assignedTeam: prev[idx].assignedTeam }
+            : f
+        );
+      }
+      return fresh;
+    });
   }, [sportId, numGroups, candidateTeams.length, groupPools]);
+
+  // Receive live real-time draw updates from other devices
+  useEffect(() => {
+    const remote = drawStates?.[sportId];
+    if (!remote || !remote.updatedAt) return;
+    if (remote.updatedAt <= lastSyncedDrawTimestampRef.current) return;
+
+    lastSyncedDrawTimestampRef.current = remote.updatedAt;
+    if (remote.numGroups && remote.numGroups !== numGroups) {
+      setNumGroups(remote.numGroups);
+    }
+    if (remote.groupPools && Object.keys(remote.groupPools).length > 0) {
+      setGroupPools(remote.groupPools);
+    }
+    if (Array.isArray(remote.bracketSlots) && remote.bracketSlots.length > 0) {
+      setBracketSlots(remote.bracketSlots as BracketSlot[]);
+      setActiveSpinSlot((prevSlot) => {
+        if (!prevSlot) return null;
+        const updatedSlot = (remote.bracketSlots as BracketSlot[]).find((s) => s.slotId === prevSlot.slotId);
+        return updatedSlot || prevSlot;
+      });
+    }
+    if (remote.customTournamentName) {
+      setCustomTournamentName(remote.customTournamentName);
+    }
+  }, [drawStates, sportId, numGroups]);
+
+  // Shuffle pools between groups
+  const handleShuffleGroupPools = () => {
+    const totalTeams = [...candidateTeams].sort(() => Math.random() - 0.5);
+    const pools: Record<string, string[]> = {};
+    activeGroupNames.forEach((gn) => (pools[gn] = []));
+
+    if (numGroups === 1) {
+      pools['Bảng A'] = [...totalTeams];
+    } else if (numGroups === 2) {
+      const mid = Math.ceil(totalTeams.length / 2);
+      pools['Bảng A'] = totalTeams.slice(0, mid);
+      pools['Bảng B'] = totalTeams.slice(mid);
+    } else {
+      totalTeams.forEach((team, idx) => {
+        const gName = activeGroupNames[idx % activeGroupNames.length];
+        pools[gName].push(team);
+      });
+    }
+
+    const resetSlots = initializeSlots(pools);
+    setGroupPools(pools);
+    setBracketSlots(resetSlots);
+    syncDrawStateToServer(resetSlots, pools, numGroups);
+  };
 
   // Track which teams have already been assigned to any slot in each group
   const getAssignedTeamsInGroup = (gName: string): Set<string> => {
@@ -284,10 +360,14 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
         setDrawnWinner(chosenWinner);
         setIsSpinning(false);
 
-        // Assign to slot and sync activeSpinSlot
-        setBracketSlots((prev) =>
-          prev.map((s) => (s.slotId === targetSlot.slotId ? { ...s, assignedTeam: chosenWinner } : s))
-        );
+        // Assign to slot, sync activeSpinSlot, and immediately push to server for cross-device sync
+        setBracketSlots((prev) => {
+          const updatedSlots = prev.map((s) =>
+            s.slotId === targetSlot.slotId ? { ...s, assignedTeam: chosenWinner } : s
+          );
+          syncDrawStateToServer(updatedSlots, groupPools, numGroups);
+          return updatedSlots;
+        });
         setActiveSpinSlot((prev) => (prev ? { ...prev, assignedTeam: chosenWinner } : prev));
         return;
       }
@@ -310,7 +390,6 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
 
     const emptySlots = bracketSlots.filter((s) => s.groupName === gName && !s.assignedTeam);
     if (emptySlots.length === 0) {
-      alert(`Tất cả các vị trí trong ${gName} đã được bốc thăm đầy đủ!`);
       setIsAutoSpinningGroup(null);
       return;
     }
@@ -324,7 +403,7 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
 
       if (assigned) {
         setActiveSpinSlot(slot);
-        setSpinningDisplayText(`Lớp ${assigned}`);
+        setSpinningDisplayText(formatTeamLabel(assigned));
         setDrawnWinner(assigned);
 
         currentSlots = currentSlots.map((s) =>
@@ -336,6 +415,7 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
       }
     }
 
+    syncDrawStateToServer(currentSlots, groupPools, numGroups);
     setIsAutoSpinningGroup(null);
     setActiveSpinSlot(null);
   };
@@ -359,7 +439,7 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
 
         if (assigned) {
           setActiveSpinSlot(slot);
-          setSpinningDisplayText(`Lớp ${assigned}`);
+          setSpinningDisplayText(formatTeamLabel(assigned));
           setDrawnWinner(assigned);
 
           currentSlots = currentSlots.map((s) =>
@@ -372,27 +452,35 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
       }
     }
 
+    syncDrawStateToServer(currentSlots, groupPools, numGroups);
     setIsAutoSpinningAll(false);
     setActiveSpinSlot(null);
   };
 
   // Reset entire draw
   const handleResetDraw = () => {
-    setBracketSlots(initializeSlots());
+    const resetSlots = initializeSlots();
+    setBracketSlots(resetSlots);
     setActiveSpinSlot(null);
     setDrawnWinner(null);
     setAppliedSuccess(false);
+    syncDrawStateToServer(resetSlots, groupPools, numGroups);
   };
 
-  // Convert drawn bracket slots into official Tournament Matches & Schedule with NO MISSING PAIRS!
-  const handleConfirmAndApplyMatches = () => {
-    const timestamp = Date.now().toString().slice(-4);
+  // Build official tournament matches from any given slots list
+  const buildMatchesAndTournamentFromSlots = (
+    slotsToUse: BracketSlot[],
+    groupsCountToUse: number = numGroups,
+    preferExistingTourId = true,
+    poolsToUse: Record<string, string[]> = groupPools
+  ) => {
+    const timestamp = preferExistingTourId ? sportId.toUpperCase() : Date.now().toString().slice(-4);
     const generatedMatches: Match[] = [];
+    const groupsList = groupLetters.slice(0, groupsCountToUse).map((l) => `Bảng ${l}`);
 
-    // Group the slots by Group Name
     const groupSlotMap: Record<string, BracketSlot[]> = {};
-    activeGroupNames.forEach((gn) => (groupSlotMap[gn] = []));
-    bracketSlots.forEach((s) => {
+    groupsList.forEach((gn) => (groupSlotMap[gn] = []));
+    slotsToUse.forEach((s) => {
       if (groupSlotMap[s.groupName]) {
         groupSlotMap[s.groupName].push(s);
       }
@@ -402,17 +490,31 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
     Object.entries(groupSlotMap).forEach(([gName, sList], gIdx) => {
       const sortedSlots = [...sList].sort((a, b) => a.slotIndexInGroup - b.slotIndexInGroup);
       const totalInGroup = sortedSlots.length;
+      const poolForGroup = poolsToUse[gName] || [];
+      const alreadyAssigned = new Set(
+        sortedSlots.map((s) => s.assignedTeam).filter((t): t is string => Boolean(t))
+      );
+      const remainingPoolTeams = poolForGroup.filter((t) => !alreadyAssigned.has(t));
+      let fallbackIdx = 0;
+
+      const resolvedTeams = sortedSlots.map((s, idx) => {
+        if (s.assignedTeam) return s.assignedTeam;
+        if (fallbackIdx < remainingPoolTeams.length) {
+          return remainingPoolTeams[fallbackIdx++];
+        }
+        return `Vị trí ${gName.replace('Bảng ', '')}${idx + 1}`;
+      });
 
       // ==============================================================
       // XỬ LÝ ĐẶC BIỆT CHO BẢNG CÓ ĐÚNG 5 ĐỘI:
       // KHÔNG THÊM ĐỘI CHỜ VÀ BỎ ĐI CÁC NHÁNH KHÔNG LIÊN QUAN!
       // ==============================================================
       if (totalInGroup === 5) {
-        const team1 = sortedSlots[0]?.assignedTeam || `Vị trí ${gName.replace('Bảng ', '')}1`;
-        const team2 = sortedSlots[1]?.assignedTeam || `Vị trí ${gName.replace('Bảng ', '')}2`;
-        const team3 = sortedSlots[2]?.assignedTeam || `Vị trí ${gName.replace('Bảng ', '')}3`;
-        const team4 = sortedSlots[3]?.assignedTeam || `Vị trí ${gName.replace('Bảng ', '')}4`;
-        const team5 = sortedSlots[4]?.assignedTeam || `Vị trí ${gName.replace('Bảng ', '')}5`;
+        const team1 = resolvedTeams[0];
+        const team2 = resolvedTeams[1];
+        const team3 = resolvedTeams[2];
+        const team4 = resolvedTeams[3];
+        const team5 = resolvedTeams[4];
 
         // Trận Sơ Loại / Playoff Duy Nhất (Đội 4 vs Đội 5)
         generatedMatches.push({
@@ -479,8 +581,8 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
       // First round matches: pair consecutive slots (1 vs 2, 3 vs 4, 5 vs 6...)
       const pairCount = Math.floor(totalInGroup / 2);
       for (let p = 0; p < pairCount; p++) {
-        const teamA = sortedSlots[p * 2]?.assignedTeam || `Vị trí ${gName.replace('Bảng ', '')}${p * 2 + 1}`;
-        const teamB = sortedSlots[p * 2 + 1]?.assignedTeam || `Vị trí ${gName.replace('Bảng ', '')}${p * 2 + 2}`;
+        const teamA = resolvedTeams[p * 2];
+        const teamB = resolvedTeams[p * 2 + 1];
         const matchNum = p + 1;
         const matchHour = 8 + gIdx + Math.floor(p / 3);
         const matchMin = (p % 3) * 30;
@@ -502,7 +604,7 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
 
       // If odd number > 5 teams, remaining team gets preliminary match
       if (totalInGroup % 2 === 1) {
-        const teamRemaining = sortedSlots[totalInGroup - 1]?.assignedTeam || `Vị trí ${gName.replace('Bảng ', '')}${totalInGroup}`;
+        const teamRemaining = resolvedTeams[totalInGroup - 1];
         generatedMatches.push({
           id: `M-BR-${timestamp}-${gIdx}-R1-EXTRA`,
           sportId,
@@ -525,8 +627,8 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
         subCategory: `${subCategory} - Bán Kết 1 ${gName}`,
         stage: 'Bán kết',
         groupName: gName,
-        teamA: totalInGroup >= 4 ? `Thắng Trận 1 ${gName}` : (sortedSlots[0]?.assignedTeam || `Hạt giống ${gName} 1`),
-        teamB: totalInGroup >= 4 ? `Thắng Trận 2 ${gName}` : (sortedSlots[1]?.assignedTeam || `Hạt giống ${gName} 2`),
+        teamA: totalInGroup >= 4 ? `Thắng Trận 1 ${gName}` : (resolvedTeams[0] || `Hạt giống ${gName} 1`),
+        teamB: totalInGroup >= 4 ? `Thắng Trận 2 ${gName}` : (resolvedTeams[1] || `Hạt giống ${gName} 2`),
         status: 'Upcoming',
         date: '2026-10-13',
         time: `${String(8 + gIdx).padStart(2, '0')}:00`,
@@ -540,8 +642,8 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
         subCategory: `${subCategory} - Bán Kết 2 ${gName}`,
         stage: 'Bán kết',
         groupName: gName,
-        teamA: totalInGroup >= 4 ? `Thắng Trận 3 ${gName}` : (sortedSlots[2]?.assignedTeam || `Hạt giống ${gName} 3`),
-        teamB: totalInGroup >= 4 ? `Thắng Trận 4 ${gName}` : (sortedSlots[3]?.assignedTeam || `Hạt giống ${gName} 4`),
+        teamA: totalInGroup >= 4 ? `Thắng Trận 3 ${gName}` : (resolvedTeams[2] || `Hạt giống ${gName} 3`),
+        teamB: totalInGroup >= 4 ? `Thắng Trận 4 ${gName}` : (resolvedTeams[3] || `Hạt giống ${gName} 4`),
         status: 'Upcoming',
         date: '2026-10-13',
         time: `${String(8 + gIdx).padStart(2, '0')}:45`,
@@ -564,8 +666,8 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
       });
     });
 
-    // 2. Grand Final Toàn Trường between group winners (only when numGroups > 1)
-    if (numGroups === 1) {
+    // 2. Grand Final Toàn Trường between group winners (only when groupsCountToUse > 1)
+    if (groupsCountToUse === 1) {
       generatedMatches.push({
         id: `M-BR-${timestamp}-GRAND-BRONZE`,
         sportId,
@@ -578,7 +680,7 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
         time: '14:30',
         venue
       });
-    } else if (numGroups === 2) {
+    } else if (groupsCountToUse === 2) {
       // 2 Groups -> Grand Final & 3rd Place Match
       generatedMatches.push({
         id: `M-BR-${timestamp}-GRAND-FINAL`,
@@ -624,7 +726,7 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
         subCategory: `${subCategory} - Bán Kết Toàn Trường 2`,
         stage: 'Bán kết',
         teamA: 'Nhất Bảng C',
-        teamB: numGroups >= 4 ? 'Nhất Bảng D' : 'Nhì Bảng A',
+        teamB: groupsCountToUse >= 4 ? 'Nhất Bảng D' : 'Nhì Bảng A',
         status: 'Upcoming',
         date: '2026-10-15',
         time: '09:30',
@@ -656,30 +758,83 @@ export const InteractiveBracketDraw: React.FC<InteractiveBracketDrawProps> = ({
       });
     }
 
-    const tourId = `TOUR-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const effectiveTourName = customTournamentName.trim() || `Giải ${currentSport?.name || 'Thể Thao'} THPT Phú Lâm 2026`;
+    const tourId =
+      preferExistingTourId && activeTournamentId && activeTournamentId !== 'all'
+        ? activeTournamentId
+        : `TOUR-${sportId.toUpperCase()}-2026`;
+    const effectiveTourName =
+      customTournamentName.trim() || `Giải ${currentSport?.name || 'Thể Thao'} THPT Phú Lâm 2026`;
+    const assignedCount = slotsToUse.filter((s) => s.assignedTeam).length;
     const newTournamentObj: Tournament = {
       id: tourId,
       name: effectiveTourName,
       sportId,
       subCategory,
-      format: numGroups > 1 ? 'group_knockout' : 'knockout',
-      numGroups,
+      format: groupsCountToUse > 1 ? 'group_knockout' : 'knockout',
+      numGroups: groupsCountToUse,
       startDate: propStartDate,
       startTime: '08:00',
       venue,
       createdAt: new Date().toISOString(),
       status: 'Upcoming',
-      teamsCount: bracketSlots.filter((s) => s.assignedTeam).length,
+      teamsCount: Math.max(assignedCount, candidateTeams.length, slotsToUse.length),
       matchesCount: generatedMatches.length,
     };
 
     const matchesWithTour: Match[] = generatedMatches.map((m) => ({
       ...m,
       tournamentId: tourId,
-      tournamentName: effectiveTourName
+      tournamentName: effectiveTourName,
     }));
 
+    return { matchesWithTour, newTournamentObj };
+  };
+
+  // Push live draw state & updated matches to server so all devices sync immediately
+  const syncDrawStateToServer = (
+    slotsToSync: BracketSlot[],
+    poolsToSync: Record<string, string[]> = groupPools,
+    groupsCountToSync: number = numGroups
+  ) => {
+    const now = Date.now();
+    lastSyncedDrawTimestampRef.current = now;
+    const { matchesWithTour, newTournamentObj } = buildMatchesAndTournamentFromSlots(
+      slotsToSync,
+      groupsCountToSync,
+      true,
+      poolsToSync
+    );
+
+    fetch('/api/draw-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sportId,
+        numGroups: groupsCountToSync,
+        groupPools: poolsToSync,
+        bracketSlots: slotsToSync,
+        customTournamentName,
+        matches: matchesWithTour,
+        tournament: newTournamentObj,
+      }),
+    })
+      .then((r) => r.json())
+      .then((res) => {
+        if (res?.drawState?.updatedAt) {
+          lastSyncedDrawTimestampRef.current = res.drawState.updatedAt;
+        }
+      })
+      .catch((e) => console.warn('Live draw sync error:', e));
+  };
+
+  // Convert drawn bracket slots into official Tournament Matches & Schedule with NO MISSING PAIRS!
+  const handleConfirmAndApplyMatches = () => {
+    const { matchesWithTour, newTournamentObj } = buildMatchesAndTournamentFromSlots(
+      bracketSlots,
+      numGroups,
+      true
+    );
+    syncDrawStateToServer(bracketSlots, groupPools, numGroups);
     onApplyMatches(matchesWithTour, newTournamentObj);
     setAppliedSuccess(true);
   };

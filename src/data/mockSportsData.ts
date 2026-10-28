@@ -282,15 +282,168 @@ export const getDefault20Registrations = (sportId: SportId = 'basketball', subCa
   }));
 };
 
-export const initialRegistrations: Registration[] = [];
+export const CARO_30_ATHLETES: { name: string; unit: string }[] = [
+  { name: 'Nguyễn Trung Tính', unit: '12A5' },
+  { name: 'Lê Minh Khang', unit: '10A4' },
+  { name: 'Chí Cao', unit: '10A10' },
+  { name: 'Phú Hưng', unit: '10A10' },
+  { name: 'Nguyễn Bình Phương Oanh', unit: '12A3' },
+  { name: 'Lê Trung Hiếu', unit: '12A1' },
+  { name: 'Đinh Hoàng Gia Bảo', unit: '10A8' },
+  { name: 'Nguyễn Gia Tường', unit: '12A9' },
+  { name: 'Phan Minh Tiến', unit: '12A1' },
+  { name: 'Nguyễn Văn Vui', unit: '11A2' },
+  { name: 'Trần Đăng Khoa', unit: '10A4' },
+  { name: 'Thành Phú', unit: '12A8' },
+  { name: 'Lâm Thiên Phúc', unit: '11A2' },
+  { name: 'Nguyễn Hùng Kiệt', unit: '12A7' },
+  { name: 'Liễu Quốc Huy', unit: '12A5' },
+  { name: 'Ngô Văn Chuẩn', unit: '12A7' },
+  { name: 'Võ Hào Kiệt', unit: '10A2' },
+  { name: 'Bùi Phát Đạt', unit: '10A2' },
+  { name: 'Nguyễn Hoàng Quý', unit: '12A9' },
+  { name: 'Trường Sơn', unit: '12A8' },
+  { name: 'Lê Nguyễn Thành Đạt', unit: '10A6' },
+  { name: 'Nguyễn Hoàng Đạt', unit: '10A6' },
+  { name: 'Nguyễn Tấn Hoàng', unit: '10A8' },
+  { name: 'Lý Trung Chánh', unit: '12A4' },
+  { name: 'Nguyễn Quốc Thái', unit: '12A3' },
+  { name: 'Lê Trịnh Khai Tâm', unit: '11A1' },
+  { name: 'Nguyễn Thành Đạt', unit: '12A2' },
+  { name: 'Lê Hoàng Tuấn', unit: '11A1' },
+  { name: 'Lê Kim Hoàng Thắng', unit: '12A4' },
+  { name: 'Trần Việt Nguyên Khang', unit: '12A2' },
+];
 
-export const initialMatches: Match[] = [];
+export const initialRegistrations: Registration[] = CARO_30_ATHLETES.map((ath, idx) => {
+  const fullLabel = `${ath.name} (${ath.unit})`;
+  const grade = parseInt(ath.unit.slice(0, 2), 10) || 10;
+  return {
+    id: `REG-CARO-${idx + 1}`,
+    sportId: 'caro',
+    subCategory: 'Cờ Caro Nam',
+    className: fullLabel,
+    grade,
+    captainName: ath.name,
+    phone: `0901000${String(idx + 1).padStart(3, '0')}`,
+    teacherName: `Đơn vị: ${ath.unit}`,
+    emblem: DEFAULT_CLASS_EMBLEMS[ath.unit] || '🏅',
+    members: [{ name: ath.name, shirtSize: 'M', jerseyNumber: idx + 1 }],
+    status: 'Approved',
+    registeredAt: '2026-10-12',
+    notes: `VĐV Cờ Caro đơn vị ${ath.unit}`,
+  };
+});
+
+const INITIAL_CARO_TOURNAMENT_ID = 'TOUR-CARO-2026';
+const INITIAL_CARO_TOURNAMENT_NAME = 'Giải Cờ Caro THPT Phú Lâm 2026';
+
+export const initialMatches: Match[] = [
+  ...Array.from({ length: 15 }, (_, pIdx): Match => {
+    const tA = `${CARO_30_ATHLETES[pIdx * 2].name} (${CARO_30_ATHLETES[pIdx * 2].unit})`;
+    const tB = `${CARO_30_ATHLETES[pIdx * 2 + 1].name} (${CARO_30_ATHLETES[pIdx * 2 + 1].unit})`;
+    const hour = 8 + Math.floor(pIdx / 3);
+    const min = (pIdx % 3) * 20;
+    return {
+      id: `M-CARO-R1-${pIdx + 1}`,
+      sportId: 'caro',
+      subCategory: 'Cờ Caro Nam - Vòng 1/16',
+      stage: 'Vòng bảng',
+      groupName: 'Bảng A',
+      teamA: tA,
+      teamB: tB,
+      status: 'Upcoming',
+      date: '2026-10-12',
+      time: `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
+      venue: 'Khu vực Sảnh Sinh Hoạt',
+      tournamentId: INITIAL_CARO_TOURNAMENT_ID,
+      tournamentName: INITIAL_CARO_TOURNAMENT_NAME,
+    };
+  }),
+  {
+    id: 'M-CARO-SF1',
+    sportId: 'caro',
+    subCategory: 'Cờ Caro Nam - Bán Kết 1 Bảng A',
+    stage: 'Bán kết',
+    groupName: 'Bảng A',
+    teamA: 'Thắng Tứ Kết 1',
+    teamB: 'Thắng Tứ Kết 2',
+    status: 'Upcoming',
+    date: '2026-10-14',
+    time: '08:30',
+    venue: 'Khu vực Sảnh Sinh Hoạt',
+    tournamentId: INITIAL_CARO_TOURNAMENT_ID,
+    tournamentName: INITIAL_CARO_TOURNAMENT_NAME,
+  },
+  {
+    id: 'M-CARO-SF2',
+    sportId: 'caro',
+    subCategory: 'Cờ Caro Nam - Bán Kết 2 Bảng A',
+    stage: 'Bán kết',
+    groupName: 'Bảng A',
+    teamA: 'Thắng Tứ Kết 3',
+    teamB: 'Thắng Tứ Kết 4',
+    status: 'Upcoming',
+    date: '2026-10-14',
+    time: '09:30',
+    venue: 'Khu vực Sảnh Sinh Hoạt',
+    tournamentId: INITIAL_CARO_TOURNAMENT_ID,
+    tournamentName: INITIAL_CARO_TOURNAMENT_NAME,
+  },
+  {
+    id: 'M-CARO-BRONZE',
+    sportId: 'caro',
+    subCategory: 'Cờ Caro Nam - Tranh Huy Chương Đồng Toàn Trường',
+    stage: 'Trận Tranh Hạng 3',
+    groupName: 'Bảng A',
+    teamA: 'Thua Bán Kết 1',
+    teamB: 'Thua Bán Kết 2',
+    status: 'Upcoming',
+    date: '2026-10-15',
+    time: '14:00',
+    venue: 'Khu vực Sảnh Sinh Hoạt',
+    tournamentId: INITIAL_CARO_TOURNAMENT_ID,
+    tournamentName: INITIAL_CARO_TOURNAMENT_NAME,
+  },
+  {
+    id: 'M-CARO-FINAL',
+    sportId: 'caro',
+    subCategory: 'Cờ Caro Nam - Chung Kết Vô Địch',
+    stage: 'Chung kết',
+    groupName: 'Bảng A',
+    teamA: 'Thắng Bán Kết 1',
+    teamB: 'Thắng Bán Kết 2',
+    status: 'Upcoming',
+    date: '2026-10-15',
+    time: '15:00',
+    venue: 'Khu vực Sảnh Sinh Hoạt',
+    tournamentId: INITIAL_CARO_TOURNAMENT_ID,
+    tournamentName: INITIAL_CARO_TOURNAMENT_NAME,
+  },
+];
 
 export const initialMedalTallies: MedalTally[] = [];
 
 export const initialAnnouncements: Announcement[] = [];
 
-export const initialTournaments: Tournament[] = [];
+export const initialTournaments: Tournament[] = [
+  {
+    id: INITIAL_CARO_TOURNAMENT_ID,
+    name: INITIAL_CARO_TOURNAMENT_NAME,
+    sportId: 'caro',
+    subCategory: 'Cờ Caro Nam',
+    format: 'knockout',
+    numGroups: 1,
+    startDate: '2026-10-12',
+    startTime: '08:00',
+    venue: 'Khu vực Sảnh Sinh Hoạt',
+    notes: 'Giải đấu Cờ Caro học đường THPT Phú Lâm (30 VĐV tham gia)',
+    createdAt: '2026-10-12T08:00:00.000Z',
+    status: 'Upcoming',
+    teamsCount: 30,
+    matchesCount: 19,
+  },
+];
 
 export const initialTournamentData: TournamentData = {
   sports: initialSports,
@@ -299,6 +452,9 @@ export const initialTournamentData: TournamentData = {
   medalTallies: initialMedalTallies,
   announcements: initialAnnouncements,
   tournaments: initialTournaments,
-  activeTournamentId: ''
+  activeTournamentId: INITIAL_CARO_TOURNAMENT_ID,
+  drawStates: {},
+  updatedAt: 1729990000000,
 };
+
 

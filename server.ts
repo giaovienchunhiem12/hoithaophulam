@@ -1,8 +1,10 @@
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
-import { initialTournamentData, getDefault20Registrations } from './src/data/mockSportsData.js';
-import { Match, Registration, Announcement, Tournament } from './src/types/sports.js';
+import { initialTournamentData } from './src/data/mockSportsData.js';
+import { Match, Registration, Announcement, Tournament, TournamentData, DrawStateRecord } from './src/types/sports.js';
 
 dotenv.config();
 
@@ -17,10 +19,89 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
-// In-memory data store with initial data
-let tournamentState = { ...initialTournamentData };
+const DATA_DIR = path.resolve('./data');
+const STATE_FILE = path.join(DATA_DIR, 'tournament-state.json');
+
+function loadPersistedState(): TournamentData {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(STATE_FILE)) {
+      const raw = fs.readFileSync(STATE_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.sports)) {
+        const hasContent =
+          (Array.isArray(parsed.registrations) && parsed.registrations.length > 0) ||
+          (Array.isArray(parsed.matches) && parsed.matches.length > 0) ||
+          (Array.isArray(parsed.tournaments) && parsed.tournaments.length > 0) ||
+          parsed.explicitlyCleared === true;
+        if (hasContent) {
+          return {
+            ...initialTournamentData,
+            ...parsed,
+            sports: initialTournamentData.sports,
+            drawStates: parsed.drawStates || {},
+            updatedAt: parsed.updatedAt || Date.now(),
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load persisted state, using default initial data:', err);
+  }
+  const fresh: TournamentData = {
+    ...initialTournamentData,
+    drawStates: initialTournamentData.drawStates || {},
+    updatedAt: Date.now(),
+  };
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify(fresh), 'utf-8');
+  } catch (e) {
+    console.warn('Failed to write initial state file:', e);
+  }
+  return fresh;
+}
+
+// Authoritative server state persisted to disk
+let tournamentState: TournamentData & { explicitlyCleared?: boolean } = loadPersistedState();
+
+// Connected SSE clients for instant multi-device synchronization
+const sseClients = new Set<express.Response>();
+
+function saveStateAndBroadcast() {
+  tournamentState.updatedAt = Date.now();
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(STATE_FILE, JSON.stringify(tournamentState), 'utf-8');
+  } catch (err) {
+    console.error('Failed to persist tournament state:', err);
+  }
+
+  const payload = `event: sync\ndata: ${JSON.stringify(tournamentState)}\n\n`;
+  sseClients.forEach((clientRes) => {
+    try {
+      clientRes.write(payload);
+    } catch {
+      sseClients.delete(clientRes);
+    }
+  });
+}
+
+// Keepalive heartbeat for SSE connections every 15s
+setInterval(() => {
+  sseClients.forEach((clientRes) => {
+    try {
+      clientRes.write(`: keepalive ${Date.now()}\n\n`);
+    } catch {
+      sseClients.delete(clientRes);
+    }
+  });
+}, 15000);
 
 // Gemini AI setup
 const ai = new GoogleGenAI({
@@ -32,40 +113,160 @@ const ai = new GoogleGenAI({
   },
 });
 
+// Real-time Server-Sent Events (SSE) stream for multi-device sync
+app.get('/api/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  // Send immediate initial sync snapshot
+  res.write(`event: sync\ndata: ${JSON.stringify(tournamentState)}\n\n`);
+  sseClients.add(res);
+
+  req.on('close', () => {
+    sseClients.delete(res);
+  });
+});
+
 // REST APIs
 app.get('/api/data', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   res.json(tournamentState);
+});
+
+// Full client-to-server state reconciliation endpoint
+app.post('/api/sync', (req, res) => {
+  const incoming = req.body as Partial<TournamentData>;
+  if (!incoming) {
+    return res.status(400).json({ error: 'Invalid sync payload' });
+  }
+
+  if (Array.isArray(incoming.registrations)) {
+    tournamentState.registrations = incoming.registrations;
+  }
+  if (Array.isArray(incoming.matches)) {
+    tournamentState.matches = incoming.matches;
+  }
+  if (Array.isArray(incoming.tournaments)) {
+    tournamentState.tournaments = incoming.tournaments;
+  }
+  if (Array.isArray(incoming.medalTallies)) {
+    tournamentState.medalTallies = incoming.medalTallies;
+  }
+  if (Array.isArray(incoming.announcements)) {
+    tournamentState.announcements = incoming.announcements;
+  }
+  if (typeof incoming.activeTournamentId === 'string') {
+    tournamentState.activeTournamentId = incoming.activeTournamentId;
+  }
+  if (incoming.drawStates && typeof incoming.drawStates === 'object') {
+    tournamentState.drawStates = {
+      ...(tournamentState.drawStates || {}),
+      ...incoming.drawStates,
+    };
+  }
+  tournamentState.explicitlyCleared = false;
+  saveStateAndBroadcast();
+  res.json({ success: true, data: tournamentState });
+});
+
+// Live Bracket Draw State Sync (syncs random wheel spins & slot assignments across devices)
+app.post('/api/draw-state', (req, res) => {
+  const { sportId, numGroups, groupPools, bracketSlots, customTournamentName, matches, tournament } = req.body;
+  if (!sportId) {
+    return res.status(400).json({ error: 'Missing sportId' });
+  }
+
+  if (!tournamentState.drawStates) {
+    tournamentState.drawStates = {};
+  }
+
+  const record: DrawStateRecord = {
+    sportId,
+    numGroups: Number(numGroups) || 1,
+    groupPools: groupPools || {},
+    bracketSlots: Array.isArray(bracketSlots) ? bracketSlots : [],
+    customTournamentName: customTournamentName || '',
+    updatedAt: Date.now(),
+  };
+
+  tournamentState.drawStates[sportId] = record;
+
+  // If live matches/tournament were also provided, update the active tournament matches immediately
+  if (tournament) {
+    if (!tournamentState.tournaments) {
+      tournamentState.tournaments = [];
+    }
+    const existsIdx = tournamentState.tournaments.findIndex((t: Tournament) => t.id === tournament.id);
+    if (existsIdx >= 0) {
+      tournamentState.tournaments[existsIdx] = tournament;
+    } else {
+      tournamentState.tournaments.unshift(tournament);
+    }
+    tournamentState.activeTournamentId = tournament.id;
+  }
+
+  if (Array.isArray(matches) && matches.length > 0) {
+    const targetTourId = tournament?.id || matches[0]?.tournamentId;
+    const remainingMatches = tournamentState.matches.filter((m: Match) => {
+      if (targetTourId && m.tournamentId === targetTourId) return false;
+      if (!targetTourId && m.sportId === sportId) return false;
+      return true;
+    });
+    tournamentState.matches = [...matches, ...remainingMatches];
+  }
+
+  saveStateAndBroadcast();
+  res.json({
+    success: true,
+    drawState: record,
+    updatedAt: tournamentState.updatedAt,
+  });
 });
 
 app.post('/api/register', (req, res) => {
   const newReg: Registration = {
     ...req.body,
-    id: `REG-${Date.now().toString().slice(-4)}`,
-    status: 'Approved', // Auto-approve for demo smoothness
-    registeredAt: new Date().toISOString().split('T')[0],
+    id: req.body.id || `REG-${Date.now().toString().slice(-4)}`,
+    status: 'Approved',
+    registeredAt: req.body.registeredAt || new Date().toISOString().split('T')[0],
   };
-  
-  tournamentState.registrations.unshift(newReg);
-  res.json({ success: true, registration: newReg });
+
+  const existsIdx = tournamentState.registrations.findIndex((r) => r.id === newReg.id);
+  if (existsIdx >= 0) {
+    tournamentState.registrations[existsIdx] = newReg;
+  } else {
+    tournamentState.registrations.unshift(newReg);
+  }
+  tournamentState.explicitlyCleared = false;
+  saveStateAndBroadcast();
+  res.json({ success: true, registration: newReg, updatedAt: tournamentState.updatedAt });
 });
 
 app.post('/api/register/bulk', (req, res) => {
   const newRegsPayload: any[] = req.body.registrations || [];
   const createdRegs: Registration[] = newRegsPayload.map((item, idx) => ({
     ...item,
-    id: `REG-${(Date.now() + idx).toString().slice(-5)}`,
+    id: item.id || `REG-${(Date.now() + idx).toString().slice(-5)}`,
     status: 'Approved',
-    registeredAt: new Date().toISOString().split('T')[0],
+    registeredAt: item.registeredAt || new Date().toISOString().split('T')[0],
   }));
 
-  tournamentState.registrations.unshift(...createdRegs);
-  res.json({ success: true, count: createdRegs.length, registrations: createdRegs });
+  const existingIds = new Set(createdRegs.map((r) => r.id));
+  const filteredExisting = tournamentState.registrations.filter((r) => !existingIds.has(r.id));
+  tournamentState.registrations = [...createdRegs, ...filteredExisting];
+  tournamentState.explicitlyCleared = false;
+  saveStateAndBroadcast();
+  res.json({ success: true, count: createdRegs.length, registrations: createdRegs, updatedAt: tournamentState.updatedAt });
 });
 
 app.post('/api/register/delete', (req, res) => {
   const { id } = req.body;
   tournamentState.registrations = tournamentState.registrations.filter((r) => r.id !== id);
-  res.json({ success: true, count: tournamentState.registrations.length });
+  saveStateAndBroadcast();
+  res.json({ success: true, count: tournamentState.registrations.length, updatedAt: tournamentState.updatedAt });
 });
 
 app.post('/api/register/update', (req, res) => {
@@ -76,7 +277,8 @@ app.post('/api/register/update', (req, res) => {
       ...tournamentState.registrations[index],
       ...updatedFields,
     };
-    res.json({ success: true, registration: tournamentState.registrations[index] });
+    saveStateAndBroadcast();
+    res.json({ success: true, registration: tournamentState.registrations[index], updatedAt: tournamentState.updatedAt });
   } else {
     res.status(404).json({ error: 'Registration not found' });
   }
@@ -84,17 +286,21 @@ app.post('/api/register/update', (req, res) => {
 
 app.post('/api/register/reset', (_req, res) => {
   tournamentState.registrations = [];
-  res.json({ success: true, count: 0, registrations: [] });
+  tournamentState.explicitlyCleared = true;
+  saveStateAndBroadcast();
+  res.json({ success: true, count: 0, registrations: [], updatedAt: tournamentState.updatedAt });
 });
 
 app.post('/api/register/clear', (_req, res) => {
   tournamentState.registrations = [];
-  res.json({ success: true, count: 0, registrations: [] });
+  tournamentState.explicitlyCleared = true;
+  saveStateAndBroadcast();
+  res.json({ success: true, count: 0, registrations: [], updatedAt: tournamentState.updatedAt });
 });
 
 app.post('/api/tournament/create', (req, res) => {
   const { matches, tournament } = req.body;
-  
+
   // 1. Save or update the tournament in tournaments array
   if (tournament) {
     if (!tournamentState.tournaments) {
@@ -109,19 +315,28 @@ app.post('/api/tournament/create', (req, res) => {
     tournamentState.activeTournamentId = tournament.id;
   }
 
-  // 2. Add matches WITHOUT wiping out matches of other tournaments or other sports
+  // 2. Replace matches belonging to the same tournamentId (or same IDs) while preserving other tournaments
   if (Array.isArray(matches) && matches.length > 0) {
     const newIds = new Set(matches.map((m: Match) => m.id));
-    const remainingMatches = tournamentState.matches.filter((m: Match) => !newIds.has(m.id));
+    const targetTourId = tournament?.id;
+    const remainingMatches = tournamentState.matches.filter((m: Match) => {
+      if (newIds.has(m.id)) return false;
+      if (targetTourId && m.tournamentId === targetTourId) return false;
+      return true;
+    });
     tournamentState.matches = [...matches, ...remainingMatches];
   }
 
-  res.json({ 
-    success: true, 
+  tournamentState.explicitlyCleared = false;
+  saveStateAndBroadcast();
+
+  res.json({
+    success: true,
     matchesCount: tournamentState.matches.length,
     tournamentsCount: tournamentState.tournaments?.length || 0,
     tournaments: tournamentState.tournaments,
-    activeTournamentId: tournamentState.activeTournamentId
+    activeTournamentId: tournamentState.activeTournamentId,
+    updatedAt: tournamentState.updatedAt,
   });
 });
 
@@ -131,7 +346,6 @@ app.post('/api/tournament/delete-tournament', (req, res) => {
     return res.status(400).json({ error: 'Missing tournamentId' });
   }
 
-  // Delete only matches linked to this tournament
   tournamentState.matches = tournamentState.matches.filter((m: Match) => m.tournamentId !== tournamentId);
   if (tournamentState.tournaments) {
     tournamentState.tournaments = tournamentState.tournaments.filter((t: Tournament) => t.id !== tournamentId);
@@ -140,22 +354,44 @@ app.post('/api/tournament/delete-tournament', (req, res) => {
     tournamentState.activeTournamentId = tournamentState.tournaments?.[0]?.id || 'all';
   }
 
-  res.json({ 
-    success: true, 
+  saveStateAndBroadcast();
+  res.json({
+    success: true,
     matchesCount: tournamentState.matches.length,
     tournaments: tournamentState.tournaments,
-    activeTournamentId: tournamentState.activeTournamentId
+    activeTournamentId: tournamentState.activeTournamentId,
+    updatedAt: tournamentState.updatedAt,
   });
 });
 
-
 app.post('/api/match/update', (req, res) => {
-  const { id, scoreA, scoreB, setsDetail, status, mvpPlayer, commentary, date, time, venue } = req.body;
+  const {
+    id,
+    teamA,
+    teamB,
+    stage,
+    groupName,
+    subCategory,
+    scoreA,
+    scoreB,
+    setsDetail,
+    status,
+    mvpPlayer,
+    commentary,
+    date,
+    time,
+    venue,
+  } = req.body;
   const matchIndex = tournamentState.matches.findIndex((m) => m.id === id);
 
   if (matchIndex !== -1) {
     const updatedMatch = {
       ...tournamentState.matches[matchIndex],
+      ...(teamA !== undefined ? { teamA } : {}),
+      ...(teamB !== undefined ? { teamB } : {}),
+      ...(stage !== undefined ? { stage } : {}),
+      ...(groupName !== undefined ? { groupName } : {}),
+      ...(subCategory !== undefined ? { subCategory } : {}),
       ...(scoreA !== undefined ? { scoreA } : {}),
       ...(scoreB !== undefined ? { scoreB } : {}),
       ...(setsDetail !== undefined ? { setsDetail } : {}),
@@ -169,15 +405,13 @@ app.post('/api/match/update', (req, res) => {
     tournamentState.matches[matchIndex] = updatedMatch;
 
     // Recalculate medal tally if a final match finished
-    if (status === 'Finished' && updatedMatch.stage === 'Chung kết') {
+    if (status === 'Finished' && updatedMatch.stage === 'Chung kết' && scoreA !== undefined && scoreB !== undefined) {
       const winner = scoreA > scoreB ? updatedMatch.teamA : updatedMatch.teamB;
       const runnerUp = scoreA > scoreB ? updatedMatch.teamB : updatedMatch.teamA;
 
-      // Clean class names (e.g., extract "12A1" from "12A1 (Trần Duy)")
       const cleanWinner = winner.match(/1[012][A-Z][0-9]+/)?.[0] || winner;
       const cleanRunnerUp = runnerUp.match(/1[012][A-Z][0-9]+/)?.[0] || runnerUp;
 
-      // Update gold for winner
       const wIdx = tournamentState.medalTallies.findIndex((m) => m.className === cleanWinner);
       if (wIdx !== -1) {
         tournamentState.medalTallies[wIdx].gold += 1;
@@ -187,7 +421,6 @@ app.post('/api/match/update', (req, res) => {
         tournamentState.medalTallies.push({ className: cleanWinner, grade, gold: 1, silver: 0, bronze: 0, totalPoints: 3 });
       }
 
-      // Update silver for runnerUp
       const rIdx = tournamentState.medalTallies.findIndex((m) => m.className === cleanRunnerUp);
       if (rIdx !== -1) {
         tournamentState.medalTallies[rIdx].silver += 1;
@@ -197,14 +430,33 @@ app.post('/api/match/update', (req, res) => {
         tournamentState.medalTallies.push({ className: cleanRunnerUp, grade, gold: 0, silver: 1, bronze: 0, totalPoints: 2 });
       }
 
-      // Re-sort medal tallies
       tournamentState.medalTallies.sort((a, b) => b.gold - a.gold || b.silver - a.silver || b.totalPoints - a.totalPoints);
     }
 
-    res.json({ success: true, match: updatedMatch, medalTallies: tournamentState.medalTallies });
+    saveStateAndBroadcast();
+    res.json({ success: true, match: updatedMatch, medalTallies: tournamentState.medalTallies, updatedAt: tournamentState.updatedAt });
+  } else if (id && req.body.sportId) {
+    // Upsert match if it was created on the client
+    const newMatch: Match = {
+      ...req.body,
+      status: req.body.status || 'Upcoming',
+    };
+    tournamentState.matches.push(newMatch);
+    saveStateAndBroadcast();
+    res.json({ success: true, match: newMatch, medalTallies: tournamentState.medalTallies, updatedAt: tournamentState.updatedAt });
   } else {
     res.status(404).json({ error: 'Match not found' });
   }
+});
+
+app.post('/api/match/delete', (req, res) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'Missing match id' });
+  }
+  tournamentState.matches = tournamentState.matches.filter((m) => m.id !== id);
+  saveStateAndBroadcast();
+  res.json({ success: true, count: tournamentState.matches.length, updatedAt: tournamentState.updatedAt });
 });
 
 app.post('/api/tournament/delete', (req, res) => {
@@ -213,28 +465,47 @@ app.post('/api/tournament/delete', (req, res) => {
     return res.status(400).json({ error: 'Missing sportId' });
   }
   tournamentState.matches = tournamentState.matches.filter((m) => m.sportId !== sportId);
-  res.json({ success: true, count: tournamentState.matches.length });
+  if (tournamentState.tournaments) {
+    tournamentState.tournaments = tournamentState.tournaments.filter((t) => t.sportId !== sportId);
+  }
+  if (tournamentState.drawStates && tournamentState.drawStates[sportId]) {
+    delete tournamentState.drawStates[sportId];
+  }
+  saveStateAndBroadcast();
+  res.json({ success: true, count: tournamentState.matches.length, updatedAt: tournamentState.updatedAt });
 });
 
 app.post('/api/match/add', (req, res) => {
   const newMatch: Match = {
     ...req.body,
-    id: `M-${Date.now().toString().slice(-4)}`,
-    status: 'Upcoming',
+    id: req.body.id || `M-${Date.now().toString().slice(-4)}`,
+    status: req.body.status || 'Upcoming',
   };
-  tournamentState.matches.push(newMatch);
-  res.json({ success: true, match: newMatch });
+  const existsIdx = tournamentState.matches.findIndex((m) => m.id === newMatch.id);
+  if (existsIdx >= 0) {
+    tournamentState.matches[existsIdx] = newMatch;
+  } else {
+    tournamentState.matches.push(newMatch);
+  }
+  saveStateAndBroadcast();
+  res.json({ success: true, match: newMatch, updatedAt: tournamentState.updatedAt });
 });
 
 app.post('/api/announcement', (req, res) => {
   const newAnn: Announcement = {
     ...req.body,
-    id: `ANN-${Date.now().toString().slice(-4)}`,
-    date: new Date().toISOString().split('T')[0],
+    id: req.body.id || `ANN-${Date.now().toString().slice(-4)}`,
+    date: req.body.date || new Date().toISOString().split('T')[0],
     author: req.body.author || 'Ban Tổ Chức Hội Thao',
   };
-  tournamentState.announcements.unshift(newAnn);
-  res.json({ success: true, announcement: newAnn });
+  const existsIdx = tournamentState.announcements.findIndex((a) => a.id === newAnn.id);
+  if (existsIdx >= 0) {
+    tournamentState.announcements[existsIdx] = newAnn;
+  } else {
+    tournamentState.announcements.unshift(newAnn);
+  }
+  saveStateAndBroadcast();
+  res.json({ success: true, announcement: newAnn, updatedAt: tournamentState.updatedAt });
 });
 
 // Gemini AI APIs

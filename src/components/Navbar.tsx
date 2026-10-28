@@ -24,8 +24,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   setSelectedSportFilter
 }) => {
   return (
-    <header className="sticky top-0 z-50 mx-4 mt-3 bg-gradient-to-r from-blue-950 via-blue-900 to-indigo-950 text-white rounded-2xl shadow-2xl border-4 border-amber-400/80 backdrop-blur-md">
-      <div className="max-w-full px-4 sm:px-6 lg:px-8 mx-auto px-4 sm:px-6 lg:px-8">
+    <header className="sticky top-0 z-50 w-full bg-gradient-to-r from-blue-950 via-blue-900 to-indigo-950 text-white shadow-2xl border-b-4 border-amber-400/90 backdrop-blur-md">
+      <div className="w-full px-4 sm:px-6 lg:px-8 mx-auto">
         <div className="flex items-center justify-between h-18">
           
           {/* Zone 1: Single Brand Lockup with School Badge */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Match, SportCategory, SportId, Registration, Tournament } from '../types/sports';
+import { Match, SportCategory, SportId, Registration, Tournament, DrawStateRecord } from '../types/sports';
 import { Calendar, MapPin, Clock, Trophy, Filter, Plus, Shuffle, Printer, Sparkles, Layers, Trash2 } from 'lucide-react';
 import { GroupAndDrawTool } from './GroupAndDrawTool';
 import { TournamentBracketTree } from './TournamentBracketTree';
@@ -11,6 +11,7 @@ interface ScheduleAndBracketProps {
   sports: SportCategory[];
   registrations: Registration[];
   tournaments?: Tournament[];
+  drawStates?: Record<string, DrawStateRecord>;
   selectedTournamentFilter?: string;
   setSelectedTournamentFilter?: (tourId: string) => void;
   onDeleteTournament?: (tourId: string) => void;
@@ -28,6 +29,7 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
   sports,
   registrations,
   tournaments = [],
+  drawStates = {},
   selectedTournamentFilter = 'all',
   setSelectedTournamentFilter,
   onDeleteTournament,
@@ -598,6 +600,17 @@ export const ScheduleAndBracket: React.FC<ScheduleAndBracketProps> = ({
           <GroupAndDrawTool
             sports={sports}
             registrations={registrations}
+            selectedSportId={
+              bracketTournament
+                ? bracketTournament.sportId
+                : selectedSportFilter !== 'all'
+                ? (selectedSportFilter as SportId)
+                : 'caro'
+            }
+            numGroupsDefault={bracketTournament?.numGroups || 1}
+            tournamentName={bracketTournament?.name}
+            activeTournamentId={bracketTournament?.id}
+            drawStates={drawStates}
             onApplyMatches={(newMatches, newTour) => {
               onApplyNewMatches(newMatches, newTour);
               setActiveView('bracket');

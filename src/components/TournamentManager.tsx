@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SportCategory, Registration, SportId, TeamMember, Match, Tournament } from '../types/sports';
+import { SportCategory, Registration, SportId, TeamMember, Match, Tournament, DrawStateRecord } from '../types/sports';
 import { OFFICIAL_20_CLASSES, getDefault20Registrations, DEFAULT_CLASS_EMBLEMS, PRESET_EMBLEMS, getTeamEmblem } from '../data/mockSportsData';
 import { 
   Trophy, Flame, Plus, Trash2, Search, Filter, Phone, User, 
@@ -28,6 +28,7 @@ interface TournamentManagerProps {
   registrations: Registration[];
   tournaments?: Tournament[];
   activeTournamentId?: string;
+  drawStates?: Record<string, DrawStateRecord>;
   onSelectTournament?: (tourId: string) => void;
   onDeleteTournament?: (tourId: string) => void;
   onNewRegistration: (newReg: Registration) => void;
@@ -45,6 +46,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
   registrations,
   tournaments = [],
   activeTournamentId,
+  drawStates = {},
   onSelectTournament,
   onDeleteTournament,
   onNewRegistration,
@@ -53,7 +55,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
   onDeleteRegistration,
   onClearAllRegistrations,
   onCreateTournament,
-  preselectedSportId = 'basketball',
+  preselectedSportId = 'caro',
   onNavigateToSchedule
 }) => {
   // Navigation Sub-tabs: 'tournament_list' | 'create_wizard' | 'bracket_draw' | 'import_file' | 'roster_list' | 'add_manual'
@@ -2198,6 +2200,8 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
             venue={venue}
             startDate={startDate}
             numGroupsDefault={numGroups}
+            activeTournamentId={activeTournamentId}
+            drawStates={drawStates}
             onAddTeamsClick={() => setActiveSubTab('add_manual')}
             onApplyMatches={(newMatches, createdTour) => {
               const tourId = createdTour?.id || `TOUR-${Date.now()}`;

@@ -107,6 +107,25 @@ export interface Announcement {
   isImportant?: boolean;
 }
 
+export interface SavedBracketSlot {
+  slotId: string;
+  groupName: string;
+  label: string;
+  assignedTeam: string | null;
+  matchStage: string;
+  pairMatchIndex: number;
+  slotIndexInGroup: number;
+}
+
+export interface DrawStateRecord {
+  sportId: SportId;
+  numGroups: number;
+  groupPools: Record<string, string[]>;
+  bracketSlots: SavedBracketSlot[];
+  customTournamentName?: string;
+  updatedAt: number;
+}
+
 export interface TournamentData {
   sports: SportCategory[];
   registrations: Registration[];
@@ -115,5 +134,8 @@ export interface TournamentData {
   announcements: Announcement[];
   tournaments?: Tournament[];
   activeTournamentId?: string;
+  drawStates?: Record<string, DrawStateRecord>;
+  updatedAt?: number;
 }
+
 

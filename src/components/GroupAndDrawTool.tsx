@@ -1,11 +1,15 @@
-import React, { useState } from 'react';
-import { SportCategory, Registration, Match, SportId, Tournament } from '../types/sports';
+import React, { useState, useEffect } from 'react';
+import { SportCategory, Registration, Match, SportId, Tournament, DrawStateRecord } from '../types/sports';
 import { Shuffle, Trophy, CheckCircle, Sparkles, RefreshCw, ArrowRight, Layers, ShieldCheck, Flame, Edit3, Grid, GitBranch, Zap, MoveHorizontal, Dices } from 'lucide-react';
 import { InteractiveBracketDraw } from './InteractiveBracketDraw';
 
 interface GroupAndDrawToolProps {
   sports: SportCategory[];
   registrations: Registration[];
+  selectedSportId?: SportId;
+  numGroupsDefault?: number;
+  activeTournamentId?: string;
+  drawStates?: Record<string, DrawStateRecord>;
   onApplyMatches: (newMatches: Match[], newTournament?: Tournament) => void;
   onClose?: () => void;
   tournamentName?: string;
@@ -32,16 +36,29 @@ interface PairingResult {
 export const GroupAndDrawTool: React.FC<GroupAndDrawToolProps> = ({
   sports,
   registrations,
+  selectedSportId: propSportId = 'caro',
+  numGroupsDefault = 1,
+  activeTournamentId,
+  drawStates = {},
   onApplyMatches,
-  onClose
+  onClose,
+  tournamentName
 }) => {
   const [toolView, setToolView] = useState<'interactive_bracket' | 'fast_draw'>('interactive_bracket');
-  const [selectedSportId, setSelectedSportId] = useState<SportId>('football');
+  const [selectedSportId, setSelectedSportId] = useState<SportId>(propSportId);
   const [drawMode, setRegDrawMode] = useState<
     'round_robin' | 'knockout' | 'groups' | 'group_knockout' | 'manual' | 'manual_group_knockout'
   >('group_knockout');
-  const [numGroups, setNumGroups] = useState<number>(4); // 2 to 8 groups
+  const [numGroups, setNumGroups] = useState<number>(numGroupsDefault); // 1 to 8 groups
   const [seedMethod, setSeedMethod] = useState<'random' | 'seeded'>('random');
+
+  useEffect(() => {
+    setSelectedSportId(propSportId);
+  }, [propSportId]);
+
+  useEffect(() => {
+    setNumGroups(numGroupsDefault);
+  }, [numGroupsDefault]);
 
   // Advancement Format After Group Stage
   const [advancementFormat, setAdvancementFormat] = useState<
@@ -505,6 +522,9 @@ export const GroupAndDrawTool: React.FC<GroupAndDrawToolProps> = ({
           registrations={registrations}
           selectedSportId={selectedSportId}
           numGroupsDefault={numGroups}
+          tournamentName={tournamentName}
+          activeTournamentId={activeTournamentId}
+          drawStates={drawStates}
           onApplyMatches={onApplyMatches}
           onClose={onClose}
         />

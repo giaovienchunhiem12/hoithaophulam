@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { SportsGrid } from './components/SportsGrid';
@@ -9,12 +9,30 @@ import { AICommentator } from './components/AICommentator';
 import { Announcements } from './components/Announcements';
 import { MatchEditModal } from './components/MatchEditModal';
 import { TournamentData, Match, Registration, Announcement, SportId, Tournament } from './types/sports';
-import { initialTournamentData, getDefault20Registrations, isSystemPlaceholderTeam, getTeamEmblem } from './data/mockSportsData';
+import { initialTournamentData, isSystemPlaceholderTeam, getTeamEmblem } from './data/mockSportsData';
 import { SCHOOL_LOGO_DATA_URI } from './assets/logoData';
-import { Trophy, Award, Heart } from 'lucide-react';
+
+const LOCAL_STORAGE_SYNC_KEY = 'phulam_realtime_tournament_data_v2';
 
 export default function App() {
-  const [data, setData] = useState<TournamentData>(initialTournamentData);
+  const [data, setData] = useState<TournamentData>(() => {
+    try {
+      const cached = localStorage.getItem(LOCAL_STORAGE_SYNC_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && Array.isArray(parsed.sports) && (parsed.registrations?.length > 0 || parsed.matches?.length > 0)) {
+          return {
+            ...initialTournamentData,
+            ...parsed,
+            sports: initialTournamentData.sports,
+          };
+        }
+      }
+    } catch {
+      // ignore storage read error
+    }
+    return initialTournamentData;
+  });
   const [activeTab, setActiveTab] = useState<string>('home');
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -26,80 +44,190 @@ export default function App() {
 
   // Modal State
   const [editingMatch, setEditingMatch] = useState<Match | null>(null);
+  const lastServerUpdatedAtRef = useRef<number>(0);
 
-  // Fetch initial data from Express API
+  // Save state snapshot to localStorage whenever data changes
   useEffect(() => {
-    fetch('/api/data')
-      .then((res) => res.json())
-      .then((serverData) => {
-        if (serverData && serverData.sports) {
-          const existingRegs: Registration[] = Array.isArray(serverData.registrations)
-            ? [...serverData.registrations]
-            : [];
-          const existingKeySet = new Set(
-            existingRegs.map((r) => `${r.sportId}__${r.className.trim()}`)
-          );
-          const recoveredRegs: Registration[] = [];
+    try {
+      localStorage.setItem(LOCAL_STORAGE_SYNC_KEY, JSON.stringify(data));
+    } catch {
+      // ignore quota errors
+    }
+  }, [data]);
 
-          if (Array.isArray(serverData.matches)) {
-            serverData.matches.forEach((m: Match, idx: number) => {
-              [m.teamA, m.teamB].forEach((tName, sideIdx) => {
-                if (!tName || isSystemPlaceholderTeam(tName, existingRegs)) return;
-                const clean = tName.trim();
-                const key = `${m.sportId}__${clean}`;
-                if (existingKeySet.has(key)) return;
-                existingKeySet.add(key);
+  const applyServerSnapshot = useCallback((serverData: any, isInitial = false) => {
+    if (!serverData || !Array.isArray(serverData.sports)) return;
 
-                const unitMatch = clean.match(/\(([^)]+)\)/);
-                const unit = unitMatch ? unitMatch[1].trim() : clean;
-                const athleteName = clean.replace(/\s*\([^)]+\)\s*$/, '').trim() || clean;
-                const gradeMatch = unit.match(/\b(10|11|12)\b/);
-                const grade = gradeMatch ? parseInt(gradeMatch[1], 10) : 10;
+    const incomingUpdatedAt = Number(serverData.updatedAt) || 0;
+    if (!isInitial && incomingUpdatedAt > 0 && incomingUpdatedAt < lastServerUpdatedAtRef.current) {
+      return;
+    }
+    if (incomingUpdatedAt > 0) {
+      lastServerUpdatedAtRef.current = incomingUpdatedAt;
+    }
 
-                recoveredRegs.push({
-                  id: `REG-SYNC-${idx}-${sideIdx}`,
-                  sportId: m.sportId,
-                  subCategory: m.subCategory?.split(' - ')[0] || 'Chính thức',
-                  className: clean,
-                  grade,
-                  captainName: athleteName,
-                  phone: '0900000000',
-                  teacherName: unit !== clean ? `Đơn vị: ${unit}` : `GVCN ${unit}`,
-                  members: [{ name: athleteName, shirtSize: 'M', jerseyNumber: 1 }],
-                  status: 'Approved',
-                  registeredAt: m.date || '2026-10-12',
-                  emblem: getTeamEmblem(clean, existingRegs),
-                  notes: 'Đồng bộ từ danh sách đội thi đấu của giải'
-                });
-              });
-            });
-          }
+    const existingRegs: Registration[] = Array.isArray(serverData.registrations)
+      ? [...serverData.registrations]
+      : [];
+    const existingKeySet = new Set(
+      existingRegs.map((r) => `${r.sportId}__${r.className.trim()}`)
+    );
+    const recoveredRegs: Registration[] = [];
 
-          const mergedRegistrations = [...existingRegs, ...recoveredRegs];
-          setData({
-            ...serverData,
-            registrations: mergedRegistrations
+    if (Array.isArray(serverData.matches)) {
+      serverData.matches.forEach((m: Match, idx: number) => {
+        [m.teamA, m.teamB].forEach((tName, sideIdx) => {
+          if (!tName || isSystemPlaceholderTeam(tName, existingRegs)) return;
+          const clean = tName.trim();
+          const key = `${m.sportId}__${clean}`;
+          if (existingKeySet.has(key)) return;
+          existingKeySet.add(key);
+
+          const unitMatch = clean.match(/\(([^)]+)\)/);
+          const unit = unitMatch ? unitMatch[1].trim() : clean;
+          const athleteName = clean.replace(/\s*\([^)]+\)\s*$/, '').trim() || clean;
+          const gradeMatch = unit.match(/\b(10|11|12)\b/);
+          const grade = gradeMatch ? parseInt(gradeMatch[1], 10) : 10;
+
+          recoveredRegs.push({
+            id: `REG-SYNC-${idx}-${sideIdx}`,
+            sportId: m.sportId,
+            subCategory: m.subCategory?.split(' - ')[0] || 'Chính thức',
+            className: clean,
+            grade,
+            captainName: athleteName,
+            phone: '0900000000',
+            teacherName: unit !== clean ? `Đơn vị: ${unit}` : `GVCN ${unit}`,
+            members: [{ name: athleteName, shirtSize: 'M', jerseyNumber: 1 }],
+            status: 'Approved',
+            registeredAt: m.date || '2026-10-12',
+            emblem: getTeamEmblem(clean, existingRegs),
+            notes: 'Đồng bộ từ danh sách đội thi đấu của giải'
           });
+        });
+      });
+    }
 
-          if (recoveredRegs.length > 0 && existingRegs.length === 0) {
-            fetch('/api/register/bulk', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ registrations: recoveredRegs })
-            }).catch(() => {});
-          }
+    const mergedRegistrations = [...existingRegs, ...recoveredRegs];
+    setData((prev) => ({
+      ...prev,
+      ...serverData,
+      sports: initialTournamentData.sports,
+      registrations: mergedRegistrations,
+      drawStates: serverData.drawStates || prev.drawStates || {},
+    }));
 
-          if (serverData.tournaments && serverData.tournaments.length > 0) {
-            const activeTour =
-              serverData.tournaments.find((t: Tournament) => t.id === serverData.activeTournamentId) ||
-              serverData.tournaments[0];
-            setSelectedTournamentFilter(activeTour.id);
+    if (recoveredRegs.length > 0 && existingRegs.length === 0) {
+      fetch('/api/register/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registrations: recoveredRegs })
+      }).catch(() => {});
+    }
+
+    if (Array.isArray(serverData.tournaments) && serverData.tournaments.length > 0) {
+      setSelectedTournamentFilter((prevFilter) => {
+        const exists = serverData.tournaments.some((t: Tournament) => t.id === prevFilter);
+        if (isInitial || (!exists && prevFilter !== 'all')) {
+          const activeTour =
+            serverData.tournaments.find((t: Tournament) => t.id === serverData.activeTournamentId) ||
+            serverData.tournaments[0];
+          if (activeTour) {
             setSelectedSportFilter(activeTour.sportId);
+            return activeTour.id;
           }
         }
-      })
-      .catch((err) => console.warn('Using initial local fallback data:', err));
+        return prevFilter;
+      });
+    }
   }, []);
+
+  // Real-time synchronization across all devices via SSE + Polling + Focus/Visibility
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchLatestData = (isInitial = false) => {
+      fetch('/api/data', { cache: 'no-store' })
+        .then((res) => res.json())
+        .then((serverData) => {
+          if (!isMounted || !serverData) return;
+          const serverEmpty =
+            (!serverData.registrations || serverData.registrations.length === 0) &&
+            (!serverData.matches || serverData.matches.length === 0) &&
+            (!serverData.tournaments || serverData.tournaments.length === 0);
+
+          if (isInitial && serverEmpty) {
+            try {
+              const cachedRaw = localStorage.getItem(LOCAL_STORAGE_SYNC_KEY);
+              const cached = cachedRaw ? JSON.parse(cachedRaw) : null;
+              if (cached && (cached.registrations?.length > 0 || cached.matches?.length > 0)) {
+                fetch('/api/sync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(cached),
+                })
+                  .then((r) => r.json())
+                  .then((resSync) => {
+                    if (isMounted && resSync?.data) {
+                      applyServerSnapshot(resSync.data, true);
+                    }
+                  })
+                  .catch(() => {});
+                return;
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          applyServerSnapshot(serverData, isInitial);
+        })
+        .catch((err) => console.warn('Sync poll fallback:', err));
+    };
+
+    // 1. Initial fetch
+    fetchLatestData(true);
+
+    // 2. Real-time Server-Sent Events (SSE) stream
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/events');
+      eventSource.addEventListener('sync', (event: MessageEvent) => {
+        if (!isMounted) return;
+        try {
+          const parsed = JSON.parse(event.data);
+          applyServerSnapshot(parsed, false);
+        } catch (e) {
+          console.warn('SSE parse error:', e);
+        }
+      });
+    } catch (e) {
+      console.warn('EventSource initialization error:', e);
+    }
+
+    // 3. Periodic poll every 3s + immediate sync on tab focus/visibility
+    const pollInterval = window.setInterval(() => {
+      fetchLatestData(false);
+    }, 3000);
+
+    const handleFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        fetchLatestData(false);
+      }
+    };
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+
+    return () => {
+      isMounted = false;
+      if (eventSource) {
+        eventSource.close();
+      }
+      window.clearInterval(pollInterval);
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+    };
+  }, [applyServerSnapshot]);
 
   // Handlers
   const handleNewRegistration = async (newReg: Registration) => {
@@ -364,19 +492,34 @@ export default function App() {
               onUpdateRegistration={handleUpdateRegistration}
               onDeleteRegistration={handleDeleteRegistration}
               onAddNewMatch={(match) => {
-                setData(prev => ({ ...prev, matches: [...prev.matches, match] }));
+                setData((prev) => ({ ...prev, matches: [...prev.matches, match] }));
+                fetch('/api/match/add', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(match),
+                }).catch((e) => console.error(e));
               }}
               onUpdateMatch={(match) => {
-                setData(prev => ({
+                setData((prev) => ({
                   ...prev,
-                  matches: prev.matches.map(m => m.id === match.id ? match : m)
+                  matches: prev.matches.map((m) => (m.id === match.id ? match : m)),
                 }));
+                fetch('/api/match/update', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(match),
+                }).catch((e) => console.error(e));
               }}
               onDeleteMatch={(id) => {
-                setData(prev => ({
+                setData((prev) => ({
                   ...prev,
-                  matches: prev.matches.filter(m => m.id !== id)
+                  matches: prev.matches.filter((m) => m.id !== id),
                 }));
+                fetch('/api/match/delete', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ id }),
+                }).catch((e) => console.error(e));
               }}
               onDeleteSport={(sportId) => {
                 fetch('/api/tournament/delete', {
@@ -402,6 +545,7 @@ export default function App() {
             registrations={data.registrations}
             tournaments={data.tournaments || []}
             activeTournamentId={selectedTournamentFilter}
+            drawStates={data.drawStates}
             onSelectTournament={(tourId) => {
               setSelectedTournamentFilter(tourId);
               const tour = data.tournaments?.find((t) => t.id === tourId);
@@ -415,7 +559,7 @@ export default function App() {
             onDeleteRegistration={handleDeleteRegistration}
             onClearAllRegistrations={handleClearAllRegistrations}
             onCreateTournament={handleCreateTournament}
-            preselectedSportId={selectedSportFilter !== 'all' ? (selectedSportFilter as SportId) : 'basketball'}
+            preselectedSportId={selectedSportFilter !== 'all' ? (selectedSportFilter as SportId) : 'caro'}
             onNavigateToSchedule={() => setActiveTab('schedule')}
           />
         )}
@@ -426,6 +570,7 @@ export default function App() {
             sports={data.sports}
             registrations={data.registrations}
             tournaments={data.tournaments || []}
+            drawStates={data.drawStates}
             selectedTournamentFilter={selectedTournamentFilter}
             setSelectedTournamentFilter={setSelectedTournamentFilter}
             isAdmin={isAdmin}
